@@ -41,10 +41,9 @@ impl S3Handler for Handler {
 async fn extract(ctx: &mut ReqContext<'_>) -> S3Result<CreateBucketRequest> {
     let bucket = ctx.unwrap_bucket_path();
 
-    let config: Option<self::xml::CreateBucketConfiguration> =
-        deserialize_xml_body(ctx.take_body())
-            .await
-            .map_err(|err| invalid_request!("Invalid xml format", err))?;
+    let config: Option<xml::CreateBucketConfiguration> = deserialize_xml_body(ctx.take_body())
+        .await
+        .map_err(|err| invalid_request!("Invalid xml format", err))?;
 
     let mut input: CreateBucketRequest = CreateBucketRequest {
         bucket: bucket.into(),

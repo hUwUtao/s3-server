@@ -1,7 +1,10 @@
 //! S3 service
 
+use crate::auth::JwtAuth;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
+use crate::dto::S3AuthContext;
+use crate::errors;
 use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
@@ -10,6 +13,9 @@ use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
 use crate::signature_v4;
 use crate::storage::S3Storage;
+use std::fs;
+use std::path::Path;
+
 use crate::streams::aws_chunked_stream::AwsChunkedStream;
 use crate::streams::multipart::{self, Multipart};
 use crate::utils::{crypto, Apply};
@@ -88,12 +94,31 @@ impl hyper::service::Service<Request> for SharedS3Service {
 
 impl S3Service {
     /// Constructs a S3 service
-    pub fn new(storage: impl S3Storage + Send + Sync + 'static) -> Self {
-        Self {
+    pub fn new(
+        storage: impl S3Storage + Send + Sync + 'static,
+        token_pem_file: &Path,
+    ) -> Result<Self, io::Error> {
+        let public_key = fs::read(token_pem_file)?;
+        let auth = JwtAuth::new(public_key);
+        Ok(Self {
             handlers: crate::ops::setup_handlers(),
             storage: Box::new(storage),
-            auth: None,
-        }
+            auth: Some(Box::new(auth)),
+        })
+    }
+
+    fn extract_token(&self, req: &Request) -> Result<String, errors::S3Error> {
+        req.headers()
+            .get("Authorization")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|auth| auth.strip_prefix("Bearer "))
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                errors::S3Error::new(
+                    S3ErrorCode::AccessDenied,
+                    "Missing or invalid Authorization header",
+                )
+            })
     }
 
     /// Set the authentication provider
@@ -143,6 +168,32 @@ impl S3Service {
     /// # Errors
     /// Returns an `Err` if any component failed
     pub async fn handle(&self, mut req: Request) -> S3Result<Response> {
+        let token = self.extract_token(&req)?;
+        let context = S3AuthContext {
+            method: req.method(),
+            uri: req.uri(),
+            headers: req.headers(),
+        };
+
+        if let Some(auth) = &self.auth {
+            auth.verify_token(&token, &context)
+                .await
+                .map_err(|_| code_error!(InvalidToken, "Invalid token"))?;
+        }
+
+        let token = self.extract_token(&req)?;
+        let context = S3AuthContext {
+            method: req.method(),
+            uri: req.uri(),
+            headers: req.headers(),
+        };
+
+        if let Some(auth) = &self.auth {
+            auth.verify_token(&token, &context)
+                .await
+                .map_err(|_| code_error!(InvalidToken, "Invalid token"))?;
+        }
+
         let body = mem::take(req.body_mut());
         let uri_path = decode_uri_path(&req)?;
         let path = extract_s3_path(&uri_path)?;
@@ -287,9 +338,39 @@ async fn check_signature(
 
 /// fetch secret key from auth
 async fn fetch_secret_key(auth: &(dyn S3Auth + Send + Sync), access_key: &str) -> S3Result<String> {
-    match try_err!(auth.get_secret_access_key(access_key).await) {
-        S3AuthError::Other(e) => Err(e),
-        S3AuthError::NotSignedUp => Err(code_error!(NotSignedUp, "Your account is not signed up")),
+    match auth.get_secret_access_key(access_key).await {
+        Ok(secret_key) => Ok(secret_key),
+        Err(S3AuthError::NotSignedUp) => {
+            Err(code_error!(NotSignedUp, "Your account is not signed up"))
+        }
+        Err(S3AuthError::InvalidToken) => Err(code_error!(
+            InvalidAccessKeyId,
+            "The AWS access key ID you provided does not exist in our records."
+        )),
+        Err(S3AuthError::Unauthorized) => Err(code_error!(AccessDenied, "Access Denied")),
+        Err(S3AuthError::AuthServiceUnavailable) => Err(code_error!(
+            ServiceUnavailable,
+            "Auth service is unavailable"
+        )),
+        Err(S3AuthError::ExpiredToken) => {
+            Err(code_error!(ExpiredToken, "The provided token has expired."))
+        }
+        Err(S3AuthError::InsufficientScope) => Err(code_error!(
+            AccessDenied,
+            "Insufficient scope for this operation."
+        )),
+        Err(S3AuthError::MissingToken) => {
+            Err(code_error!(AccessDenied, "Missing authentication token."))
+        }
+        Err(S3AuthError::TokenVerificationFailed) => Err(code_error!(
+            InvalidAccessKeyId,
+            "Token verification failed."
+        )),
+        Err(S3AuthError::InvalidCredentials) => Err(code_error!(
+            InvalidAccessKeyId,
+            "The provided credentials are invalid."
+        )),
+        Err(S3AuthError::Other(msg)) => Err(internal_error!(msg)),
     }
 }
 
@@ -492,7 +573,7 @@ async fn check_header_auth(
                 signature_v4::Payload::MultipleChunks,
             )
         } else {
-            let bytes = std::mem::take(&mut ctx.body)
+            let bytes = mem::take(&mut ctx.body)
                 .apply(hyper::body::to_bytes)
                 .await
                 .map_err(|err| invalid_request!("Can not obtain the whole request body.", err))?;

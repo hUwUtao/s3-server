@@ -44,7 +44,7 @@ impl S3Handler for Handler {
 
 /// extract operation request
 async fn extract(ctx: &mut ReqContext<'_>) -> S3Result<CompleteMultipartUploadRequest> {
-    let multipart_upload: Option<self::xml::CompletedMultipartUpload> =
+    let multipart_upload: Option<xml::CompletedMultipartUpload> =
         deserialize_xml_body(ctx.take_body())
             .await
             .map_err(|err| invalid_request!("Invalid xml format", err))?;

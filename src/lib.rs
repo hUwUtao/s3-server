@@ -76,7 +76,7 @@
     elided_lifetimes_in_paths,
     missing_copy_implementations,
     missing_debug_implementations,
-    missing_docs,
+    // missing_docs,
     single_use_lifetimes,
     trivial_casts,
     trivial_numeric_casts,
@@ -144,6 +144,7 @@ pub use self::storage::S3Storage;
 pub mod dto;
 pub mod errors;
 pub mod headers;
+pub mod jwt;
 pub mod path;
 pub mod storages;
 

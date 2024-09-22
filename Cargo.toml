@@ -40,6 +40,7 @@ hmac = "0.12.1"
 http = "0.2.7"
 httparse = "1.7.0"
 hyper = { version = "0.14.18", features = ["server"] }
+jsonwebtoken = "8.3.0"
 md-5 = "0.10.1"
 memchr = "2.4.1"
 mime = "0.3.16"
@@ -51,7 +52,7 @@ quick-xml = { version = "0.27.1", features = ["serialize"] }
 regex = "1.5.5"
 rusoto_core = "0.48.0"
 rusoto_s3 = "0.48.0"
-serde = "1.0.136"
+serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
 serde_urlencoded = "0.7.1"
 sha2 = "0.10.2"

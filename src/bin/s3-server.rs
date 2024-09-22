@@ -12,7 +12,7 @@
 //!         --fs-root <fs-root>           [default: .]
 //!         --host <host>                 [default: localhost]
 //!         --port <port>                 [default: 8014]
-//!         --access-key <access-key>    
+//!         --access-key <access-key>
 //!         --secret-key <secret-key>
 //! ```
 
@@ -33,7 +33,11 @@ use structopt::StructOpt;
 use tracing::{debug, info};
 
 #[derive(StructOpt)]
+#[structopt(name = "s3-server")]
 struct Args {
+    #[structopt(long, help = "Path to the PEM file for token verification")]
+    token_pem_file: PathBuf,
+
     #[structopt(long, default_value = ".")]
     fs_root: PathBuf,
 
@@ -78,7 +82,8 @@ async fn main() -> Result<()> {
     debug!(?fs);
 
     // setup the service
-    let mut service = S3Service::new(fs);
+    let service = S3Service::new(fs, &args.token_pem_file)?;
+    debug!(?service);
 
     if let (Some(access_key), Some(secret_key)) = (args.access_key, args.secret_key) {
         let mut auth = SimpleAuth::new();

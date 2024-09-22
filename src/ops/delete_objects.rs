@@ -41,7 +41,7 @@ impl S3Handler for Handler {
 /// extract operation request
 pub async fn extract(ctx: &mut ReqContext<'_>) -> S3Result<DeleteObjectsRequest> {
     let bucket = ctx.unwrap_bucket_path();
-    let delete: self::xml::Delete = deserialize_xml_body(ctx.take_body())
+    let delete: xml::Delete = deserialize_xml_body(ctx.take_body())
         .await
         .map_err(|err| invalid_request!("Invalid xml format", err))?;
 

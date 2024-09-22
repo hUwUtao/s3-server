@@ -198,6 +198,22 @@ pub type S3StorageResult<T, E> = Result<T, S3StorageError<E>>;
 pub enum S3AuthError {
     /// Not signed up
     NotSignedUp,
+    /// Invalid token
+    InvalidToken,
+    /// Expired token
+    ExpiredToken,
+    /// Insufficient scope
+    InsufficientScope,
+    /// Invalid credentials
+    InvalidCredentials,
+    /// Token verification failed
+    TokenVerificationFailed,
+    /// Missing required token
+    MissingToken,
+    /// Unauthorized access
+    Unauthorized,
+    /// Authentication service unavailable
+    AuthServiceUnavailable,
     /// Other errors
     Other(S3Error),
 }
@@ -212,6 +228,14 @@ impl Error for S3AuthError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
             Self::NotSignedUp => None,
+            Self::InvalidToken => None,
+            Self::ExpiredToken => None,
+            Self::InsufficientScope => None,
+            Self::InvalidCredentials => None,
+            Self::TokenVerificationFailed => None,
+            Self::MissingToken => None,
+            Self::Unauthorized => None,
+            Self::AuthServiceUnavailable => None,
             Self::Other(ref e) => Some(e),
         }
     }
@@ -502,7 +526,7 @@ pub enum S3ErrorCode {
 
 impl Display for S3ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Self as fmt::Debug>::fmt(self, f)
+        write!(f, "{}", self.as_static_str())
     }
 }
 
