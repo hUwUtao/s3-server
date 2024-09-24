@@ -58,9 +58,48 @@ pub fn setup_handlers() -> Vec<Box<dyn S3Handler + Send + Sync + 'static>> {
     ]
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum S3Operation {
+    /// For query
+    ObjectGet,
+    /// For upload
+    ObjectPut,
+    /// For delete
+    ObjectDelete,
+    /// For listing
+    ObjectList,
+
+    /// For query
+    BucketGet,
+    /// For listing
+    BucketList,
+    /// For create
+    BucketCreate,
+    /// For delete
+    BucketDelete,
+}
+
+impl Into<&str> for S3Operation {
+    fn into(self) -> &'static str {
+        match self {
+            S3Operation::ObjectGet => "objectGet",
+            S3Operation::ObjectPut => "objectPut",
+            S3Operation::ObjectDelete => "objectDelete",
+            S3Operation::ObjectList => "objectList",
+            S3Operation::BucketGet => "bucketGet",
+            S3Operation::BucketList => "bucketList",
+            S3Operation::BucketCreate => "bucketCreate",
+            S3Operation::BucketDelete => "bucketDelete",
+        }
+    }
+}
+
 /// S3 operation handler
 #[async_trait]
 pub trait S3Handler {
+    /// Get the kind of S3 operation this handler performs
+    fn kind(&self) -> S3Operation;
+
     /// determine if the handler matches current request
     fn is_match(&self, ctx: &'_ ReqContext<'_>) -> bool;
 

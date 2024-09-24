@@ -247,6 +247,44 @@ impl From<S3Error> for S3AuthError {
     }
 }
 
+impl S3AuthError {
+    pub fn into_generic_error(self) -> S3Error {
+        match self {
+            Self::NotSignedUp => S3Error::new(
+                S3ErrorCode::NotSignedUp,
+                "Your account is not signed up for the S3 service.",
+            ),
+            Self::InvalidToken => {
+                S3Error::new(S3ErrorCode::InvalidToken, "The provided token is invalid.")
+            }
+            Self::ExpiredToken => {
+                S3Error::new(S3ErrorCode::ExpiredToken, "The provided token has expired.")
+            }
+            Self::InsufficientScope => S3Error::new(
+                S3ErrorCode::AccessDenied,
+                "The token does not have sufficient scope for this operation.",
+            ),
+            Self::InvalidCredentials => S3Error::new(
+                S3ErrorCode::InvalidAccessKeyId,
+                "The provided credentials are invalid.",
+            ),
+            Self::TokenVerificationFailed => {
+                S3Error::new(S3ErrorCode::InvalidToken, "Token verification failed.")
+            }
+            Self::MissingToken => S3Error::new(
+                S3ErrorCode::AccessDenied,
+                "Authentication token is missing.",
+            ),
+            Self::Unauthorized => S3Error::new(S3ErrorCode::AccessDenied, "Access denied."),
+            Self::AuthServiceUnavailable => S3Error::new(
+                S3ErrorCode::ServiceUnavailable,
+                "Authentication service is unavailable.",
+            ),
+            Self::Other(e) => e,
+        }
+    }
+}
+
 /// S3 error code enum
 ///
 /// See [`ErrorResponses`](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html)

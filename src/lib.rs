@@ -137,7 +137,7 @@ mod auth;
 mod service;
 mod storage;
 
-pub use self::auth::{S3Auth, SimpleAuth};
+pub use self::auth::S3Auth;
 pub use self::service::{S3Service, SharedS3Service};
 pub use self::storage::S3Storage;
 

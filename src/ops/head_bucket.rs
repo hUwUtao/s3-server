@@ -15,6 +15,8 @@ pub struct Handler;
 
 #[async_trait]
 impl S3Handler for Handler {
+    ops_kind! {BucketGet}
+
     fn is_match(&self, ctx: &'_ ReqContext<'_>) -> bool {
         bool_try!(ctx.req.method() == Method::HEAD);
         ctx.path.is_bucket()

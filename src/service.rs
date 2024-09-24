@@ -1,6 +1,7 @@
 //! S3 service
 
 use crate::auth::JwtAuth;
+use crate::auth::JwtCtx;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
 use crate::dto::S3AuthContext;
@@ -33,6 +34,7 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
+use rusoto_s3::S3Error;
 use tracing::{debug, error};
 
 /// S3 service
@@ -175,24 +177,15 @@ impl S3Service {
             headers: req.headers(),
         };
 
-        if let Some(auth) = &self.auth {
-            auth.verify_token(&token, &context)
-                .await
-                .map_err(|_| code_error!(InvalidToken, "Invalid token"))?;
-        }
-
-        let token = self.extract_token(&req)?;
-        let context = S3AuthContext {
-            method: req.method(),
-            uri: req.uri(),
-            headers: req.headers(),
+        let auth_ctx = if let Some(auth) = &self.auth {
+            Some(
+                auth.verify_token(&token, &context)
+                    .await
+                    .map_err(|_| code_error!(InvalidToken, "Invalid token"))?,
+            )
+        } else {
+            None
         };
-
-        if let Some(auth) = &self.auth {
-            auth.verify_token(&token, &context)
-                .await
-                .map_err(|_| code_error!(InvalidToken, "Invalid token"))?;
-        }
 
         let body = mem::take(req.body_mut());
         let uri_path = decode_uri_path(&req)?;
@@ -222,6 +215,10 @@ impl S3Service {
 
         for handler in &self.handlers {
             if handler.is_match(&ctx) {
+                if let Some(auth_ctx) = auth_ctx {
+                    crate::auth::authorize(&auth_ctx.0.roles, handler, &ctx)
+                        .map_err(|i| i.into_generic_error())?;
+                }
                 return handler.handle(&mut ctx, &*self.storage).await;
             }
         }

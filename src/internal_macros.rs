@@ -142,3 +142,11 @@ macro_rules! internal_error {
         err
     }};
 }
+
+macro_rules! ops_kind {
+    ($K:ident) => {
+        fn kind(&self) -> crate::ops::S3Operation {
+            crate::ops::S3Operation::$K
+        }
+    };
+}
