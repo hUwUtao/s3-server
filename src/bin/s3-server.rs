@@ -20,7 +20,6 @@
 
 use s3_server::storages::fs::FileSystem;
 use s3_server::S3Service;
-use s3_server::SimpleAuth;
 
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -36,7 +35,7 @@ use tracing::{debug, info};
 #[structopt(name = "s3-server")]
 struct Args {
     #[structopt(long, help = "Path to the PEM file for token verification")]
-    token_pem_file: PathBuf,
+    public_key: PathBuf,
 
     #[structopt(long, default_value = ".")]
     fs_root: PathBuf,
@@ -46,12 +45,11 @@ struct Args {
 
     #[structopt(long, default_value = "8014")]
     port: u16,
+    // #[structopt(long, requires("secret-key"), display_order = 1000)]
+    // access_key: Option<String>,
 
-    #[structopt(long, requires("secret-key"), display_order = 1000)]
-    access_key: Option<String>,
-
-    #[structopt(long, requires("access-key"), display_order = 1000)]
-    secret_key: Option<String>,
+    // #[structopt(long, requires("access-key"), display_order = 1000)]
+    // secret_key: Option<String>,
 }
 
 pub fn setup_tracing() {
@@ -82,15 +80,15 @@ async fn main() -> Result<()> {
     debug!(?fs);
 
     // setup the service
-    let service = S3Service::new(fs, &args.token_pem_file)?;
+    let service = S3Service::new(fs, &args.public_key)?;
     debug!(?service);
 
-    if let (Some(access_key), Some(secret_key)) = (args.access_key, args.secret_key) {
-        let mut auth = SimpleAuth::new();
-        auth.register(access_key, secret_key);
-        debug!(?auth);
-        service.set_auth(auth);
-    }
+    // if let (Some(access_key), Some(secret_key)) = (args.access_key, args.secret_key) {
+    // let mut auth = SimpleAuth::new();
+    // auth.register(access_key, secret_key);
+    // debug!(?auth);
+    // service.set_auth(auth);
+    // }
 
     let server = {
         let service = service.into_shared();

@@ -3,15 +3,16 @@
 use crate::dto::S3AuthContext;
 use crate::errors::S3AuthError;
 use crate::jwt::Claims;
-use crate::ops::ReqContext;
 
 mod authorization {
-    use crate::dto::S3AuthContext;
+
     use crate::errors::S3AuthError;
     use crate::ops::{ReqContext, S3Handler};
     use crate::path::S3Path;
     use regex::Regex;
+    use tracing::info;
 
+    #[derive(Debug)]
     pub struct Permission {
         operations: Vec<String>,
         bucket_matcher: Regex,
@@ -53,27 +54,30 @@ mod authorization {
 
         pub fn matches(&self, operation: &str, bucket: &str, path: Option<&str>) -> bool {
             if !self.operations.contains(&operation.to_string()) {
+                info!("not match ops");
                 return false;
             }
 
             if !self.bucket_matcher.is_match(bucket) {
+                info!("not match bucket");
                 return false;
             }
-
-            if let Some(ref path_matcher) = self.path_matcher {
-                if let Some(path) = path {
-                    let matches = path_matcher.is_match(path);
-                    if self.path_matcher_inverted {
-                        !matches
-                    } else {
-                        matches
-                    }
-                } else {
-                    false
-                }
-            } else {
-                true
-            }
+            // TODO: Path ACL
+            // if let Some(ref path_matcher) = self.path_matcher {
+            //     if let Some(path) = path {
+            //         let matches = path_matcher.is_match(path);
+            //         if self.path_matcher_inverted {
+            //             !matches
+            //         } else {
+            //             matches
+            //         }
+            //     } else {
+            //         false
+            //     }
+            // } else {
+            //     true
+            // }
+            true
         }
     }
 
@@ -84,14 +88,17 @@ mod authorization {
     ) -> Result<(), S3AuthError> {
         let operation = handler.kind();
         let (bucket, path) = match context.path {
+            S3Path::Root => ("*", None),
             S3Path::Bucket { bucket } => (bucket, None),
             S3Path::Object { bucket, key } => (bucket, Some(key)),
-            _ => return Err(S3AuthError::Unauthorized),
         };
+
+        info!("{:?} {:?} {:?}", operation, bucket, path);
 
         for role in roles {
             if let Ok(permission) = Permission::new(role) {
-                if permission.matches(operation.into(), bucket, path) {
+                info!("{:?}", &permission);
+                if permission.matches(&format!("{:?}", operation), bucket, path) {
                     return Ok(());
                 }
             }
@@ -119,40 +126,25 @@ mod authorization {
 }
 pub use authorization::authorize;
 
-use std::collections::HashMap;
-
 use async_trait::async_trait;
 
 /// S3 Authentication Provider
 
 #[async_trait]
 pub trait S3Auth {
-    /// Verify the authentication token
-    async fn verify_token<'a>(
-        &self,
-        token: &str,
-        context: &S3AuthContext<'a>,
-    ) -> Result<JwtCtx, S3AuthError>;
-
     /// lookup `secret_access_key` by `access_key_id`
-    async fn get_secret_access_key(&self, access_key_id: &str) -> Result<String, S3AuthError>;
+    async fn get_secret_access_key(
+        &self,
+        context: &mut S3AuthContext<'_>,
+        access_key_id: &str,
+    ) -> Result<String, S3AuthError>;
 }
 
 /// JWT-based authentication provider
+#[derive(Debug)]
 pub struct JwtAuth {
     public_key: Vec<u8>,
 }
-
-/// (Auth internal) post authentication context
-// pub trait AuthCtx: Send {}
-
-/// JWT-post-verified context
-#[derive(Debug)]
-pub struct JwtCtx(pub Claims);
-// pub struct NulCtx {}
-
-// impl AuthCtx for JwtCtx {}
-// impl AuthCtx for NulCtx {}
 
 impl JwtAuth {
     /// Constructs a new `JwtAuth`
@@ -163,25 +155,26 @@ impl JwtAuth {
 
 #[async_trait]
 impl S3Auth for JwtAuth {
-    async fn verify_token<'a>(
+    async fn get_secret_access_key(
         &self,
+        context: &mut S3AuthContext<'_>,
         token: &str,
-        _context: &S3AuthContext<'a>,
-    ) -> Result<JwtCtx, S3AuthError> {
-        match crate::jwt::validate_jwt(token, &self.public_key) {
-            Ok(claims) => {
-                if !claims.aud.contains(&"storage".to_string()) {
-                    return Err(S3AuthError::InsufficientScope);
+    ) -> Result<String, S3AuthError> {
+        if let Some(claim) = &context.claims {
+            Ok(claim.sec.clone())
+        } else {
+            match crate::jwt::validate_jwt(token, &self.public_key) {
+                Ok(claims) => {
+                    if !claims.aud.contains(&"storage".to_string()) {
+                        return Err(S3AuthError::InsufficientScope);
+                    }
+                    let cloned = claims.sec.clone();
+                    context.claims = Some(claims);
+                    Ok(cloned)
                 }
-                // Ok(Box::new(JwtCtx(claims)))
-                Ok(JwtCtx(claims))
+                Err(_) => Err(S3AuthError::InvalidToken),
             }
-            Err(_) => Err(S3AuthError::InvalidToken),
         }
-    }
-
-    async fn get_secret_access_key(&self, _access_key_id: &str) -> Result<String, S3AuthError> {
-        Err(S3AuthError::NotSignedUp)
     }
 }
 

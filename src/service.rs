@@ -1,11 +1,11 @@
 //! S3 service
 
 use crate::auth::JwtAuth;
-use crate::auth::JwtCtx;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
 use crate::dto::S3AuthContext;
 use crate::errors;
+use crate::errors::S3Error;
 use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
@@ -16,6 +16,7 @@ use crate::signature_v4;
 use crate::storage::S3Storage;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use crate::streams::aws_chunked_stream::AwsChunkedStream;
 use crate::streams::multipart::{self, Multipart};
@@ -34,7 +35,7 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
-use rusoto_s3::S3Error;
+use tracing::warn;
 use tracing::{debug, error};
 
 /// S3 service
@@ -109,20 +110,6 @@ impl S3Service {
         })
     }
 
-    fn extract_token(&self, req: &Request) -> Result<String, errors::S3Error> {
-        req.headers()
-            .get("Authorization")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                errors::S3Error::new(
-                    S3ErrorCode::AccessDenied,
-                    "Missing or invalid Authorization header",
-                )
-            })
-    }
-
     /// Set the authentication provider
     pub fn set_auth<A>(&mut self, auth: A)
     where
@@ -170,21 +157,11 @@ impl S3Service {
     /// # Errors
     /// Returns an `Err` if any component failed
     pub async fn handle(&self, mut req: Request) -> S3Result<Response> {
-        let token = self.extract_token(&req)?;
-        let context = S3AuthContext {
-            method: req.method(),
-            uri: req.uri(),
-            headers: req.headers(),
-        };
-
-        let auth_ctx = if let Some(auth) = &self.auth {
-            Some(
-                auth.verify_token(&token, &context)
-                    .await
-                    .map_err(|_| code_error!(InvalidToken, "Invalid token"))?,
-            )
-        } else {
-            None
+        let mut context = S3AuthContext {
+            method: &req.method().clone(),
+            uri: &req.uri().clone(),
+            headers: &req.headers().clone(),
+            claims: None,
         };
 
         let body = mem::take(req.body_mut());
@@ -202,9 +179,12 @@ impl S3Service {
             body,
             mime,
             multipart: None,
+            auth: &mut context,
         };
 
         check_signature(&mut ctx, self.auth.as_deref()).await?;
+
+        warn!("authorized");
 
         if ctx.req.method() == Method::POST && ctx.path.is_object() && ctx.multipart.is_some() {
             return Err(code_error!(
@@ -215,8 +195,8 @@ impl S3Service {
 
         for handler in &self.handlers {
             if handler.is_match(&ctx) {
-                if let Some(auth_ctx) = auth_ctx {
-                    crate::auth::authorize(&auth_ctx.0.roles, handler, &ctx)
+                if let Some(claims) = &ctx.auth.claims {
+                    crate::auth::authorize(&claims.roles, handler, &ctx)
                         .map_err(|i| i.into_generic_error())?;
                 }
                 return handler.handle(&mut ctx, &*self.storage).await;
@@ -334,8 +314,12 @@ async fn check_signature(
 }
 
 /// fetch secret key from auth
-async fn fetch_secret_key(auth: &(dyn S3Auth + Send + Sync), access_key: &str) -> S3Result<String> {
-    match auth.get_secret_access_key(access_key).await {
+async fn fetch_secret_key(
+    ctx: &mut S3AuthContext<'_>,
+    auth: &(dyn S3Auth + Send + Sync),
+    access_key: &str,
+) -> S3Result<String> {
+    match auth.get_secret_access_key(ctx, access_key).await {
         Ok(secret_key) => Ok(secret_key),
         Err(S3AuthError::NotSignedUp) => {
             Err(code_error!(NotSignedUp, "Your account is not signed up"))
@@ -441,7 +425,8 @@ async fn check_post_signature(
             .map_err(|err| invalid_request!("Invalid field: x-amz-date", err))?;
 
         // fetch secret_key
-        let secret_key = fetch_secret_key(auth_provider, credential.access_key_id).await?;
+        let secret_key =
+            fetch_secret_key(ctx.auth, auth_provider, credential.access_key_id).await?;
 
         // calculate signature
         let string_to_sign = policy;
@@ -489,8 +474,12 @@ async fn check_presigned_url(
         }
     };
 
-    let secret_key =
-        fetch_secret_key(auth_provider, presigned_url.credential.access_key_id).await?;
+    let secret_key = fetch_secret_key(
+        ctx.auth,
+        auth_provider,
+        presigned_url.credential.access_key_id,
+    )
+    .await?;
 
     let signature = {
         let headers = ctx
@@ -542,8 +531,12 @@ async fn check_header_auth(
     let amz_content_sha256 = extract_amz_content_sha256(&ctx.headers)?
         .ok_or_else(|| invalid_request!("Missing header: x-amz-content-sha256"))?;
 
-    let secret_key =
-        fetch_secret_key(auth_provider, authorization.credential.access_key_id).await?;
+    let secret_key = fetch_secret_key(
+        ctx.auth,
+        auth_provider,
+        authorization.credential.access_key_id,
+    )
+    .await?;
 
     let amz_date = extract_amz_date(&ctx.headers)?
         .ok_or_else(|| invalid_request!("Missing header: x-amz-date"))?;

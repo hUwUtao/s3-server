@@ -20,6 +20,7 @@ mod put_object;
 mod upload_part;
 
 use crate::data_structures::{OrderedHeaders, OrderedQs};
+use crate::dto::S3AuthContext;
 use crate::errors::S3Result;
 use crate::path::S3Path;
 use crate::storage::S3Storage;
@@ -79,21 +80,6 @@ pub enum S3Operation {
     BucketDelete,
 }
 
-impl Into<&str> for S3Operation {
-    fn into(self) -> &'static str {
-        match self {
-            S3Operation::ObjectGet => "objectGet",
-            S3Operation::ObjectPut => "objectPut",
-            S3Operation::ObjectDelete => "objectDelete",
-            S3Operation::ObjectList => "objectList",
-            S3Operation::BucketGet => "bucketGet",
-            S3Operation::BucketList => "bucketList",
-            S3Operation::BucketCreate => "bucketCreate",
-            S3Operation::BucketDelete => "bucketDelete",
-        }
-    }
-}
-
 /// S3 operation handler
 #[async_trait]
 pub trait S3Handler {
@@ -128,6 +114,8 @@ pub struct ReqContext<'a> {
     pub mime: Option<Mime>,
     /// multipart/form-data
     pub multipart: Option<Multipart>,
+    /// auth
+    pub auth: &'a mut S3AuthContext<'a>,
 }
 
 impl<'a> ReqContext<'a> {

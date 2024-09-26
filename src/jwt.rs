@@ -16,6 +16,8 @@ pub struct Claims {
     pub exp: usize,
     /// Audience (intended recipients)
     pub aud: Vec<String>,
+    /// Secret'nt
+    pub sec: String,
     /// User roles
     pub roles: Vec<String>,
 }

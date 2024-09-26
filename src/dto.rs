@@ -18,6 +18,8 @@ pub use rusoto_s3::{
     PutObjectRequest, UploadPartError, UploadPartOutput, UploadPartRequest,
 };
 
+use crate::jwt::Claims;
+
 /// S3 authentication context
 ///
 /// This struct contains the necessary information from an HTTP request
@@ -30,6 +32,8 @@ pub struct S3AuthContext<'a> {
     pub uri: &'a Uri,
     /// The headers of the request
     pub headers: &'a HeaderMap,
+    /// The mutable claims for authorization
+    pub claims: Option<Claims>,
 }
 
 /// `DeleteBucketOutput`
