@@ -34,7 +34,11 @@ use tracing::{debug, info};
 #[derive(StructOpt)]
 #[structopt(name = "s3-server")]
 struct Args {
-    #[structopt(long, help = "Path to the PEM file for token verification")]
+    #[structopt(
+        long,
+        default_value = "./target/pub.pem",
+        help = "Path to the PEM file for token verification"
+    )]
     public_key: PathBuf,
 
     #[structopt(long, default_value = ".")]

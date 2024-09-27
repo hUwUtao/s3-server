@@ -690,6 +690,7 @@ impl S3Storage for FileSystem {
         let size = trace_try!(ret);
         let md5_sum = md5_hash.finalize().apply(crypto::to_hex_string);
 
+        #[cfg(debug_assertions)]
         debug!(
             path = %object_path.display(),
             ?size,

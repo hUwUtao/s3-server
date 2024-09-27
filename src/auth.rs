@@ -2,21 +2,25 @@
 
 use crate::dto::S3AuthContext;
 use crate::errors::S3AuthError;
-use crate::jwt::Claims;
 
 mod authorization {
+
+    
+    use std::path::PathBuf;
 
     use crate::errors::S3AuthError;
     use crate::ops::{ReqContext, S3Handler};
     use crate::path::S3Path;
+    
+    use path_matchers::{glob, PathMatcher};
     use regex::Regex;
-    use tracing::info;
+    
 
-    #[derive(Debug)]
+    // #[derive(Debug)]
     pub struct Permission {
         operations: Vec<String>,
         bucket_matcher: Regex,
-        path_matcher: Option<Regex>,
+        path_matcher: Option<Box<dyn PathMatcher + 'static>>,
         path_matcher_inverted: bool,
     }
 
@@ -31,15 +35,24 @@ mod authorization {
             let bucket_matcher = Regex::new(&glob_to_regex(&parts[2]))
                 .map_err(|_| S3AuthError::InvalidCredentials)?;
 
+            // let (path_matcher, path_matcher_inverted) = if parts.len() == 4 {
+            //     let (inverted, pattern) = if {
+            //         (true, &parts[3][1..])
+            //     } else {
+            //         (false, parts[3])
+            //     };
+            //     let regex = Regex::new(&glob_to_regex(pattern))
+            //         .map_err(|_| S3AuthError::InvalidCredentials)?;
+            //     (Some(regex), inverted)
+            // } else {
+            //     (None, false)
+            // };
+
             let (path_matcher, path_matcher_inverted) = if parts.len() == 4 {
-                let (inverted, pattern) = if parts[3].starts_with('!') {
-                    (true, &parts[3][1..])
-                } else {
-                    (false, parts[3])
-                };
-                let regex = Regex::new(&glob_to_regex(pattern))
-                    .map_err(|_| S3AuthError::InvalidCredentials)?;
-                (Some(regex), inverted)
+                (
+                    Some(glob(parts[3]).unwrap().boxed()),
+                    parts[3].starts_with('!'),
+                )
             } else {
                 (None, false)
             };
@@ -54,30 +67,29 @@ mod authorization {
 
         pub fn matches(&self, operation: &str, bucket: &str, path: Option<&str>) -> bool {
             if !self.operations.contains(&operation.to_string()) {
-                info!("not match ops");
+                // info!("not match ops");
                 return false;
             }
 
             if !self.bucket_matcher.is_match(bucket) {
-                info!("not match bucket");
+                // info!("not match bucket");
                 return false;
             }
             // TODO: Path ACL
-            // if let Some(ref path_matcher) = self.path_matcher {
-            //     if let Some(path) = path {
-            //         let matches = path_matcher.is_match(path);
-            //         if self.path_matcher_inverted {
-            //             !matches
-            //         } else {
-            //             matches
-            //         }
-            //     } else {
-            //         false
-            //     }
-            // } else {
-            //     true
-            // }
-            true
+            return if let Some(ref path_matcher) = self.path_matcher {
+                if let Some(path) = path {
+                    // info!("matching");
+                    let matches = path_matcher.matches(&PathBuf::from(path));
+                    matches ^ self.path_matcher_inverted
+                } else {
+                    // TODO
+                    // if there is no path but requested in a path required endpoint, it should not be possible
+                    // there is no such case yet this is exploitable
+                    true
+                }
+            } else {
+                true
+            };
         }
     }
 
@@ -93,11 +105,11 @@ mod authorization {
             S3Path::Object { bucket, key } => (bucket, Some(key)),
         };
 
-        info!("{:?} {:?} {:?}", operation, bucket, path);
+        // info!("{:?} {:?} {:?}", operation, bucket, path);
 
         for role in roles {
             if let Ok(permission) = Permission::new(role) {
-                info!("{:?}", &permission);
+                // info!("{:?}", &permission);
                 if permission.matches(&format!("{:?}", operation), bucket, path) {
                     return Ok(());
                 }
@@ -107,13 +119,23 @@ mod authorization {
     }
 
     fn glob_to_regex(pattern: &str) -> String {
+        // info!("Parsing path glob {pattern}");
         let mut regex = String::new();
         regex.push('^');
-        for c in pattern.chars() {
+        let mut chars = pattern.chars().peekable();
+        while let Some(c) = chars.next() {
             match c {
-                '*' => regex.push_str(".*"),
-                '?' => regex.push('.'),
-                '.' | '+' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' => {
+                '*' => {
+                    if chars.peek() == Some(&'*') {
+                        regex.push_str("(?:|.*)");
+                        let _ = chars.next();
+                    } else {
+                        regex.push_str("[^/]*");
+                    }
+                }
+                '?' => regex.push_str("[^/]"),
+                '$' => regex.push('.'),
+                '.' | '+' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' => {
                     regex.push('\\');
                     regex.push(c);
                 }

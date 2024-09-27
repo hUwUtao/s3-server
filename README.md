@@ -37,6 +37,8 @@ s3-server --help
 
 ## Usage
 
+You must generate `target/pub.pem` which also require a private key to sign token. Yet, token are infered, which is really costy
+
 ```
 s3-server 0.2.0
 
@@ -51,8 +53,6 @@ OPTIONS:
         --fs-root <fs-root>           [default: .]
         --host <host>                 [default: localhost]
         --port <port>                 [default: 8014]
-        --access-key <access-key>    
-        --secret-key <secret-key>
 ```
 
 ## Debug

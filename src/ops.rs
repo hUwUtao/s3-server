@@ -68,6 +68,7 @@ pub enum S3Operation {
     /// For delete
     ObjectDelete,
     /// For listing
+    /// DEPRECATED! this is not a valid opt since it doesn't request path on server
     ObjectList,
 
     /// For query

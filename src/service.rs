@@ -4,8 +4,6 @@ use crate::auth::JwtAuth;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
 use crate::dto::S3AuthContext;
-use crate::errors;
-use crate::errors::S3Error;
 use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
@@ -16,7 +14,6 @@ use crate::signature_v4;
 use crate::storage::S3Storage;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
 
 use crate::streams::aws_chunked_stream::AwsChunkedStream;
 use crate::streams::multipart::{self, Multipart};
@@ -35,7 +32,6 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
-use tracing::warn;
 use tracing::{debug, error};
 
 /// S3 service
@@ -139,12 +135,15 @@ impl S3Service {
         )
     )]
     pub async fn hyper_call(&self, req: Request) -> Result<Response, BoxStdError> {
+        #[cfg(debug_assertions)]
         debug!("req = \n{:#?}", req);
+
         let ret = match self.handle(req).await {
             Ok(resp) => Ok(resp),
             Err(err) => err.into_xml_response().try_into_response(),
         };
 
+        #[cfg(debug_assertions)]
         match ret {
             Ok(ref resp) => debug!("resp = \n{:#?}", resp),
             Err(ref err) => error!(%err),
@@ -184,7 +183,7 @@ impl S3Service {
 
         check_signature(&mut ctx, self.auth.as_deref()).await?;
 
-        warn!("authorized");
+        // warn!("authorized");
 
         if ctx.req.method() == Method::POST && ctx.path.is_object() && ctx.multipart.is_some() {
             return Err(code_error!(
