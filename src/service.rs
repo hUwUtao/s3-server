@@ -1,6 +1,6 @@
 //! S3 service
 
-use crate::auth::JwtAuth;
+use crate::auth::ACLAuth;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
 use crate::dto::S3AuthContext;
@@ -12,8 +12,7 @@ use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
 use crate::signature_v4;
 use crate::storage::S3Storage;
-use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::streams::aws_chunked_stream::AwsChunkedStream;
 use crate::streams::multipart::{self, Multipart};
@@ -95,10 +94,11 @@ impl S3Service {
     /// Constructs a S3 service
     pub fn new(
         storage: impl S3Storage + Send + Sync + 'static,
-        token_pem_file: &Path,
+        path: PathBuf,
     ) -> Result<Self, io::Error> {
-        let public_key = fs::read(token_pem_file)?;
-        let auth = JwtAuth::new(public_key);
+        // let public_key = fs::read(token_pem_file)?;
+        let auth = ACLAuth::new(path);
+        // let auth = JwtAuth::new(public_key);
         Ok(Self {
             handlers: crate::ops::setup_handlers(),
             storage: Box::new(storage),

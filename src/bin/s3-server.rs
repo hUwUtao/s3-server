@@ -17,7 +17,6 @@
 //! ```
 
 #![forbid(unsafe_code)]
-
 use s3_server::storages::fs::FileSystem;
 use s3_server::S3Service;
 
@@ -30,17 +29,15 @@ use hyper::server::Server;
 use hyper::service::make_service_fn;
 use structopt::StructOpt;
 use tracing::{debug, info};
-
 #[derive(StructOpt)]
 #[structopt(name = "s3-server")]
 struct Args {
-    #[structopt(
-        long,
-        default_value = "./target/pub.pem",
-        help = "Path to the PEM file for token verification"
-    )]
-    public_key: PathBuf,
-
+    // #[structopt(
+    //     long,
+    //     default_value = "./target/pub.pem",
+    //     help = "Path to the PEM file for token verification"
+    // )]
+    // public_key: PathBuf,
     #[structopt(long, default_value = ".")]
     fs_root: PathBuf,
 
@@ -78,15 +75,15 @@ async fn main() -> Result<()> {
     setup_tracing();
 
     let args: Args = Args::from_args();
-
     // setup the storage
     let fs = FileSystem::new(&args.fs_root)?;
     debug!(?fs);
 
     // setup the service
-    let service = S3Service::new(fs, &args.public_key)?;
+    let service = S3Service::new(fs, args.fs_root)?;
     debug!(?service);
 
+    // report memory
     // if let (Some(access_key), Some(secret_key)) = (args.access_key, args.secret_key) {
     // let mut auth = SimpleAuth::new();
     // auth.register(access_key, secret_key);

@@ -1,20 +1,21 @@
 //! S3 Authentication
 
+use std::path::PathBuf;
+
 use crate::dto::S3AuthContext;
 use crate::errors::S3AuthError;
+use crate::token::database::IndexDB;
 
 mod authorization {
 
-    
     use std::path::PathBuf;
 
     use crate::errors::S3AuthError;
     use crate::ops::{ReqContext, S3Handler};
     use crate::path::S3Path;
-    
+
     use path_matchers::{glob, PathMatcher};
     use regex::Regex;
-    
 
     // #[derive(Debug)]
     pub struct Permission {
@@ -197,6 +198,33 @@ impl S3Auth for JwtAuth {
                 Err(_) => Err(S3AuthError::InvalidToken),
             }
         }
+    }
+}
+
+pub struct ACLAuth {
+    indexdb: IndexDB,
+}
+
+impl ACLAuth {
+    pub fn new(fs_root: PathBuf) -> Self {
+        Self {
+            indexdb: IndexDB::new(fs_root).unwrap(),
+        }
+    }
+}
+
+#[async_trait]
+impl S3Auth for ACLAuth {
+    async fn get_secret_access_key(
+        &self,
+        context: &mut S3AuthContext<'_>,
+        key_id: &str,
+    ) -> Result<String, S3AuthError> {
+        if let Some(token) = self.indexdb.query_token(&key_id) {
+            context.claims = Some((&token).into());
+            return Ok(token.get_sec_str());
+        }
+        Err(S3AuthError::NotSignedUp)
     }
 }
 

@@ -132,6 +132,7 @@ mod ops;
 mod output;
 mod signature_v4;
 mod streams;
+mod token;
 
 mod auth;
 mod service;
