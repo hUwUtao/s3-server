@@ -160,7 +160,7 @@ impl S3Service {
             method: &req.method().clone(),
             uri: &req.uri().clone(),
             headers: &req.headers().clone(),
-            claims: None,
+            accessId: None,
         };
 
         let body = mem::take(req.body_mut());
@@ -183,7 +183,7 @@ impl S3Service {
 
         check_signature(&mut ctx, self.auth.as_deref()).await?;
 
-        // warn!("authorized");
+        debug!("authorized");
 
         if ctx.req.method() == Method::POST && ctx.path.is_object() && ctx.multipart.is_some() {
             return Err(code_error!(
@@ -194,8 +194,13 @@ impl S3Service {
 
         for handler in &self.handlers {
             if handler.is_match(&ctx) {
-                if let Some(claims) = &ctx.auth.claims {
-                    crate::auth::authorize(&claims.roles, handler, &ctx)
+                // if let Some(claims) = &ctx.auth.claims {
+                //     crate::auth::authorize(&claims.roles, handler, &ctx)
+                //         .map_err(|i| i.into_generic_error())?;
+                // }
+                if let Some(auth) = self.auth.as_deref() {
+                    auth.authorize_query(&ctx, handler)
+                        .await
                         .map_err(|i| i.into_generic_error())?;
                 }
                 return handler.handle(&mut ctx, &*self.storage).await;

@@ -44,9 +44,8 @@ impl Token {
 pub struct BucketConfigFile {
     /// Which paths should be publiced
     public: Vec<String>,
-    /// Which bucket can allow role from this bucket
-    /// If the token, whose origin is from which bucket, is the origin specified here?
-    allows: String,
+    /// A list of bucket, which token is defined in that bucket is allowed here. Determined by token's origin claim
+    allows: Vec<String>,
     /// Who owns this bucket? metadata preserved for future query
     owners: Vec<u64>,
     /// The tokens
