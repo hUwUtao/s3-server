@@ -162,7 +162,7 @@ impl S3Service {
             method: &req.method().clone(),
             uri: &req.uri().clone(),
             headers: &req.headers().clone(),
-            accessId: None,
+            access_id: None,
         };
 
         let body = mem::take(req.body_mut());

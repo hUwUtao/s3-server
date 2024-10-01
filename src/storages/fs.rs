@@ -3,7 +3,7 @@
 use crate::async_trait;
 use crate::data_structures::BytesStream;
 use crate::dto::{
-    Bucket, CompleteMultipartUploadError, CompleteMultipartUploadOutput,
+    Bucket, CommonPrefix, CompleteMultipartUploadError, CompleteMultipartUploadOutput,
     CompleteMultipartUploadRequest, CopyObjectError, CopyObjectOutput, CopyObjectRequest,
     CopyObjectResult, CreateBucketError, CreateBucketOutput, CreateBucketRequest,
     CreateMultipartUploadError, CreateMultipartUploadOutput, CreateMultipartUploadRequest,
@@ -506,6 +506,7 @@ impl S3Storage for FileSystem {
         let path = trace_try!(self.get_bucket_path(&input.bucket));
 
         let mut objects = Vec::new();
+        let mut common_prefixes = Vec::new();
         let mut dir_queue = VecDeque::new();
         dir_queue.push_back(path.clone());
 
@@ -514,24 +515,42 @@ impl S3Storage for FileSystem {
             while let Some(entry) = entries.next().await {
                 let entry = trace_try!(entry);
                 let file_type = trace_try!(entry.file_type().await);
-                if file_type.is_dir() {
-                    dir_queue.push_back(entry.path());
-                } else {
-                    let file_path = entry.path();
-                    let key = trace_try!(file_path.strip_prefix(&path));
-                    if let Some(ref prefix) = input.prefix {
-                        if !key.to_string_lossy().as_ref().starts_with(prefix) {
-                            continue;
-                        }
-                    }
+                let file_path = entry.path();
+                let key = trace_try!(file_path.strip_prefix(&path));
+                let key_str = key.to_string_lossy().to_string().replace("\\", "/");
 
+                if let Some(ref prefix) = input.prefix {
+                    if !key_str.starts_with(prefix) {
+                        continue;
+                    }
+                }
+
+                if let Some(ref delimiter) = input.delimiter {
+                    if let Some(end) =
+                        key_str[input.prefix.as_deref().unwrap_or("").len()..].find(delimiter)
+                    {
+                        let common_prefix =
+                            key_str[..(input.prefix.as_deref().unwrap_or("").len()
+                                + end
+                                + delimiter.len())]
+                                .to_string();
+                        if !common_prefixes.contains(&common_prefix) {
+                            common_prefixes.push(common_prefix);
+                        }
+                        continue;
+                    }
+                }
+
+                if file_type.is_dir() {
+                    dir_queue.push_back(file_path);
+                } else {
                     let metadata = trace_try!(entry.metadata().await);
                     let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
                     let size = metadata.len();
 
                     objects.push(Object {
                         e_tag: None,
-                        key: Some(key.to_string_lossy().into()),
+                        key: Some(key_str),
                         last_modified: Some(last_modified),
                         owner: None,
                         size: Some(trace_try!(size.try_into())),
@@ -547,18 +566,24 @@ impl S3Storage for FileSystem {
             lhs_key.cmp(rhs_key)
         });
 
-        // TODO: handle other fields
         let output = ListObjectsOutput {
             contents: Some(objects),
             delimiter: input.delimiter,
             encoding_type: input.encoding_type,
             name: Some(input.bucket),
-            common_prefixes: None,
+            common_prefixes: Some(
+                common_prefixes
+                    .into_iter()
+                    .map(|prefix| CommonPrefix {
+                        prefix: Some(prefix),
+                    })
+                    .collect(),
+            ),
             is_truncated: None,
             marker: None,
             max_keys: None,
             next_marker: None,
-            prefix: None,
+            prefix: input.prefix,
         };
 
         Ok(output)
@@ -572,6 +597,7 @@ impl S3Storage for FileSystem {
         let path = trace_try!(self.get_bucket_path(&input.bucket));
 
         let mut objects = Vec::new();
+        let mut common_prefixes = Vec::new();
         let mut dir_queue = VecDeque::new();
         dir_queue.push_back(path.clone());
 
@@ -580,24 +606,42 @@ impl S3Storage for FileSystem {
             while let Some(entry) = entries.next().await {
                 let entry = trace_try!(entry);
                 let file_type = trace_try!(entry.file_type().await);
-                if file_type.is_dir() {
-                    dir_queue.push_back(entry.path());
-                } else {
-                    let file_path = entry.path();
-                    let key = trace_try!(file_path.strip_prefix(&path));
-                    if let Some(ref prefix) = input.prefix {
-                        if !key.to_string_lossy().as_ref().starts_with(prefix) {
-                            continue;
-                        }
-                    }
+                let file_path = entry.path();
+                let key = trace_try!(file_path.strip_prefix(&path));
+                let key_str = key.to_string_lossy().to_string().replace("\\", "/");
 
+                if let Some(ref prefix) = input.prefix {
+                    if !key_str.starts_with(prefix) {
+                        continue;
+                    }
+                }
+
+                if let Some(ref delimiter) = input.delimiter {
+                    if let Some(end) =
+                        key_str[input.prefix.as_deref().unwrap_or("").len()..].find(delimiter)
+                    {
+                        let common_prefix =
+                            key_str[..(input.prefix.as_deref().unwrap_or("").len()
+                                + end
+                                + delimiter.len())]
+                                .to_string();
+                        if !common_prefixes.contains(&common_prefix) {
+                            common_prefixes.push(common_prefix);
+                        }
+                        continue;
+                    }
+                }
+
+                if file_type.is_dir() {
+                    dir_queue.push_back(file_path);
+                } else {
                     let metadata = trace_try!(entry.metadata().await);
                     let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
                     let size = metadata.len();
 
                     objects.push(Object {
                         e_tag: None,
-                        key: Some(key.to_string_lossy().into()),
+                        key: Some(key_str),
                         last_modified: Some(last_modified),
                         owner: None,
                         size: Some(trace_try!(size.try_into())),
@@ -613,20 +657,28 @@ impl S3Storage for FileSystem {
             lhs_key.cmp(rhs_key)
         });
 
-        // TODO: handle other fields
         let output = ListObjectsV2Output {
-            key_count: Some(trace_try!(objects.len().try_into())),
+            key_count: Some(trace_try!(
+                (objects.len() + common_prefixes.len()).try_into()
+            )),
             contents: Some(objects),
             delimiter: input.delimiter,
             encoding_type: input.encoding_type,
             name: Some(input.bucket),
-            common_prefixes: None,
+            common_prefixes: Some(
+                common_prefixes
+                    .into_iter()
+                    .map(|prefix| CommonPrefix {
+                        prefix: Some(prefix),
+                    })
+                    .collect(),
+            ),
             is_truncated: None,
             max_keys: None,
-            prefix: None,
+            prefix: input.prefix,
             continuation_token: None,
             next_continuation_token: None,
-            start_after: None,
+            start_after: input.start_after,
         };
 
         Ok(output)
