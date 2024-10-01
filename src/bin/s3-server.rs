@@ -38,7 +38,7 @@ struct Args {
     //     help = "Path to the PEM file for token verification"
     // )]
     // public_key: PathBuf,
-    #[structopt(long, default_value = ".")]
+    #[structopt(long, default_value = "./storage")]
     fs_root: PathBuf,
 
     #[structopt(long, default_value = "localhost")]

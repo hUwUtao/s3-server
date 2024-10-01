@@ -31,6 +31,8 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
+use tracing::info;
+use tracing::warn;
 use tracing::{debug, error};
 
 /// S3 service
@@ -549,7 +551,7 @@ async fn check_header_auth(
 
     let signature = {
         let method = ctx.req.method();
-        let uri_path = ctx.req.uri().path();
+        let uri_path = decode_uri_path(ctx.req)?.into_owned();
         let query_strings: &[(String, String)] =
             ctx.query_strings.as_ref().map_or(&[], AsRef::as_ref);
 
@@ -561,7 +563,7 @@ async fn check_header_auth(
         let canonical_request = if is_stream {
             signature_v4::create_canonical_request(
                 method,
-                uri_path,
+                &uri_path,
                 query_strings,
                 &headers,
                 signature_v4::Payload::MultipleChunks,
@@ -582,7 +584,7 @@ async fn check_header_auth(
 
             let ans = signature_v4::create_canonical_request(
                 method,
-                uri_path,
+                &uri_path,
                 query_strings,
                 &headers,
                 payload,
