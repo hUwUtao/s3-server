@@ -1,9 +1,13 @@
 use base64;
 use serde_json;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tracing::{info, warn};
 
-use crate::{auth::Permission, dto::S3AuthContext};
+use crate::auth::{Matcher, Permission};
 
 use super::{BucketConfigFile, Token};
 #[derive(Debug)]
@@ -16,11 +20,13 @@ pub struct IndexDB {
     indexed_token: HashMap<u64, (String, String)>,
     /// Index by K token hash, V is permission object
     indexed_roles: HashMap<u64, Arc<Vec<Permission>>>,
+    /// Index by k bucket name, V is public matcher
+    indexed_public: HashMap<String, Arc<Vec<Matcher>>>,
     /// Buckets that should be ignored during reload
     locked_bucket: Vec<String>,
 }
 
-impl<'a> IndexDB {
+impl IndexDB {
     fn parse_roles(&self, roles: &[String]) -> Vec<Permission> {
         roles
             .iter()
@@ -93,6 +99,15 @@ impl<'a> IndexDB {
             })
     }
 
+    pub fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> bool {
+        if let Some(matchs) = self.indexed_public.get(bucket) {
+            if matchs.iter().any(|m| m.matches(path)) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn initiate_reload(&mut self, bucket_name: &str) -> std::io::Result<()> {
         if self.is_locked(bucket_name) {
             warn!("Deadlock on reload \"{}\"", bucket_name);
@@ -113,9 +128,43 @@ impl<'a> IndexDB {
             indexed_config: HashMap::new(),
             indexed_token: HashMap::new(),
             indexed_roles: HashMap::new(),
+            indexed_public: HashMap::new(),
             locked_bucket: Vec::new(),
         };
         db.load()?;
+
+        {
+            // Add volatile bucket with empty string name
+            let null_bucket = String::new();
+            let mut null_cfg = BucketConfigFile {
+                public: Vec::new(),
+                allows: Vec::new(),
+                owners: Vec::new(),
+                tokens: HashMap::new(),
+            };
+
+            // Add token with empty string access_id and jti of 0x0
+            let null_token = Token {
+                sub: 0,
+                iat: 0,
+                jti: 0x0,
+                exp: None,
+                origin: String::new(),
+                roles: Vec::new(),
+            };
+            let _ = null_cfg.tokens.insert(String::new(), null_token);
+
+            // Add volatile bucket to indexed_config
+            let _ = db.indexed_config.insert(null_bucket.clone(), null_cfg);
+
+            // Index the volatile token
+            let token_hash = db.hash_access_id("");
+            let _ = db
+                .indexed_token
+                .insert(token_hash, (null_bucket, String::new()));
+            let _ = db.indexed_roles.insert(token_hash, Arc::new(Vec::new()));
+        }
+
         Ok(db)
     }
     fn reload_bucket(&mut self, bucket_name: &str) -> std::io::Result<()> {
@@ -126,6 +175,7 @@ impl<'a> IndexDB {
                 let _ = self.indexed_token.remove(&token_index);
                 let _ = self.indexed_roles.remove(&token_index);
             }
+            let _ = self.indexed_public.remove(bucket_name);
         }
 
         // Load the new config
@@ -136,6 +186,7 @@ impl<'a> IndexDB {
                 .indexed_config
                 .insert(bucket_name.to_string(), new_config.clone());
             self.index_tokens(bucket_name, &new_config);
+            self.index_public(bucket_name, &new_config);
         }
 
         Ok(())
@@ -193,6 +244,7 @@ impl<'a> IndexDB {
                         .indexed_config
                         .insert(bucket_name.clone(), config.clone());
                     self.index_tokens(&bucket_name, &config);
+                    self.index_public(&bucket_name, &config);
                     entries += 1;
                 }
                 Err(e) => {
@@ -231,6 +283,19 @@ impl<'a> IndexDB {
             let _ = self
                 .indexed_roles
                 .insert(token_index, Arc::new(permissions));
+        }
+    }
+
+    fn index_public(&mut self, bucket_name: &str, config: &BucketConfigFile) {
+        let matchers = config
+            .public
+            .iter()
+            .filter_map(|path| Matcher::new(path.to_string()).ok())
+            .collect::<Vec<Matcher>>();
+        if !matchers.is_empty() {
+            let _ = self
+                .indexed_public
+                .insert(bucket_name.to_string(), Arc::new(matchers));
         }
     }
 }

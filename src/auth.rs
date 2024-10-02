@@ -1,9 +1,9 @@
 //! S3 Authentication
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::S3AuthError;
-use crate::ops::ReqContext;
+use crate::ops::{ReqContext, S3Operation};
 use crate::path::S3Path;
 use crate::token::database::IndexDB;
 use crate::{dto::S3AuthContext, ops::S3Handler};
@@ -21,14 +21,14 @@ mod authorization {
     use regex::Regex;
     use tracing::debug;
 
-    struct Matcher(String, Box<dyn PathMatcher + Send + Sync>);
+    pub struct Matcher(String, Box<dyn PathMatcher + Send + Sync>);
     impl<'a> Matcher {
-        fn new(pattern: String) -> Result<Self, PatternError> {
+        pub fn new(pattern: String) -> Result<Self, PatternError> {
             let glob = Box::new(glob(&pattern)?);
             Ok(Self(pattern, glob))
         }
 
-        fn matches(&self, path: &Path) -> bool {
+        pub fn matches(&self, path: &Path) -> bool {
             self.1.matches(path)
         }
     }
@@ -167,7 +167,7 @@ mod authorization {
         regex
     }
 }
-pub use authorization::Permission;
+pub use authorization::{Matcher, Permission};
 
 use async_trait::async_trait;
 
@@ -188,6 +188,10 @@ pub trait S3Auth {
         handler: &Box<dyn S3Handler + Send + Sync>,
     ) -> Result<(), S3AuthError> {
         Err(S3AuthError::AuthServiceUnavailable)
+    }
+
+    async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
+        Err(S3AuthError::Unauthorized)
     }
 }
 
@@ -255,6 +259,18 @@ impl S3Auth for ACLAuth {
         Err(S3AuthError::NotSignedUp)
     }
 
+    async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
+        if let S3Path::Object { bucket, key } = ctx.path {
+            if self
+                .indexdb
+                .query_is_match_indexed_public(bucket, &Path::new(key))
+            {
+                return Ok(());
+            }
+        }
+        Err(S3AuthError::Unauthorized)
+    }
+
     async fn authorize_query(
         &self,
         ctx: &'_ ReqContext<'_>,
@@ -273,6 +289,7 @@ impl S3Auth for ACLAuth {
                 }
             }
         }
+        // else if {}
         Err(S3AuthError::Unauthorized)
     }
 }

@@ -7,6 +7,7 @@ use crate::dto::S3AuthContext;
 use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
+use crate::ops::S3Operation;
 use crate::ops::{ReqContext, S3Handler};
 use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
@@ -183,9 +184,7 @@ impl S3Service {
             auth: &mut context,
         };
 
-        check_signature(&mut ctx, self.auth.as_deref()).await?;
-
-        debug!("authorized");
+        debug!("authenticated");
 
         if ctx.req.method() == Method::POST && ctx.path.is_object() && ctx.multipart.is_some() {
             return Err(code_error!(
@@ -193,6 +192,14 @@ impl S3Service {
                 "The specified method is not allowed against this resource."
             ));
         }
+
+        if let Some(auth) = self.auth.as_deref() {
+            if ctx.path.is_object() && auth.authorize_public_query(&ctx).await.is_ok() {
+                return self.handlers[0].handle(&mut ctx, &*self.storage).await;
+            }
+        }
+
+        check_signature(&mut ctx, self.auth.as_deref()).await?;
 
         for handler in &self.handlers {
             if handler.is_match(&ctx) {

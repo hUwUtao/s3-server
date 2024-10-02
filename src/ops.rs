@@ -40,6 +40,9 @@ pub fn setup_handlers() -> Vec<Box<dyn S3Handler + Send + Sync + 'static>> {
     }
 
     zst_handlers![
+        // special order
+        get_object,
+        //
         complete_multipart_upload,
         copy_object,
         create_bucket,
@@ -48,7 +51,6 @@ pub fn setup_handlers() -> Vec<Box<dyn S3Handler + Send + Sync + 'static>> {
         delete_object,
         delete_objects,
         get_bucket_location,
-        get_object,
         head_bucket,
         head_object,
         list_buckets,
