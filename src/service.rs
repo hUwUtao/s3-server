@@ -7,7 +7,6 @@ use crate::dto::S3AuthContext;
 use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
-use crate::ops::S3Operation;
 use crate::ops::{ReqContext, S3Handler};
 use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
@@ -32,8 +31,6 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
-use tracing::info;
-use tracing::warn;
 use tracing::{debug, error};
 
 /// S3 service

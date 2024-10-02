@@ -60,6 +60,17 @@ pub fn setup_tracing() {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::{fmt, EnvFilter};
 
+    #[cfg(feature = "tokio_unstable")]
+    {
+        let console_layer = console_subscriber::spawn();
+        tracing_subscriber::registry()
+            .with(console_layer)
+            // .with(tracing_subscriber::fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    }
+
+    #[cfg(not(feature = "tokio_unstable"))]
     tracing_subscriber::fmt()
         .event_format(fmt::format::Format::default().pretty())
         .with_env_filter(EnvFilter::from_default_env())

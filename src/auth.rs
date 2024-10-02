@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::errors::S3AuthError;
-use crate::ops::{ReqContext, S3Operation};
+use crate::ops::ReqContext;
 use crate::path::S3Path;
 use crate::token::database::IndexDB;
 use crate::{dto::S3AuthContext, ops::S3Handler};
@@ -11,11 +11,11 @@ use crate::{dto::S3AuthContext, ops::S3Handler};
 mod authorization {
 
     use std::fmt::Debug;
-    use std::path::{Display, Path, PathBuf};
+    use std::path::{Path, PathBuf};
 
     use crate::errors::S3AuthError;
-    use crate::ops::{ReqContext, S3Handler};
-    use crate::path::S3Path;
+    use crate::ops::S3Handler;
+    
 
     use path_matchers::{glob, PathMatcher, PatternError};
     use regex::Regex;
