@@ -27,7 +27,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
 use std::env;
 use std::io::{self, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufWriter};
 use futures::stream::{Stream, StreamExt, TryStreamExt};
@@ -497,65 +497,127 @@ impl S3Storage for FileSystem {
         };
         Ok(output)
     }
-
     #[tracing::instrument]
     async fn list_objects(
         &self,
         input: ListObjectsRequest,
     ) -> S3StorageResult<ListObjectsOutput, ListObjectsError> {
-        let path = trace_try!(self.get_bucket_path(&input.bucket));
+        let bucket_path = trace_try!(self.get_bucket_path(&input.bucket));
 
         let mut objects = Vec::new();
         let mut common_prefixes = Vec::new();
         let mut dir_queue = VecDeque::new();
-        dir_queue.push_back(path.clone());
 
-        while let Some(dir) = dir_queue.pop_front() {
-            let mut entries = trace_try!(async_fs::read_dir(dir).await);
-            while let Some(entry) = entries.next().await {
-                let entry = trace_try!(entry);
-                let file_type = trace_try!(entry.file_type().await);
-                let file_path = entry.path();
-                let key = trace_try!(file_path.strip_prefix(&path));
-                let key_str = key.to_string_lossy().to_string().replace("\\", "/");
+        if let Some(ref delimiter) = input.delimiter {
+            let normalized_prefix = Path::new(input.prefix.as_deref().unwrap_or(""))
+                .components()
+                .filter(|c| *c != Component::ParentDir && *c != Component::CurDir)
+                .collect::<PathBuf>();
 
-                if let Some(ref prefix) = input.prefix {
-                    if !key_str.starts_with(prefix) {
-                        continue;
+            let prefix_parts: Vec<_> = normalized_prefix
+                .to_str()
+                .unwrap_or("")
+                .split(delimiter)
+                .collect();
+
+            let (start_path, filter_prefix) = if prefix_parts.last() == Some(&"") {
+                (
+                    &bucket_path.join(&normalized_prefix.parent().unwrap_or(Path::new(""))),
+                    None,
+                )
+            } else if prefix_parts.len() > 1 {
+                (
+                    &bucket_path.join(&normalized_prefix.parent().unwrap_or(Path::new(""))),
+                    Some(
+                        normalized_prefix
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                )
+            } else {
+                (
+                    &bucket_path,
+                    Some(normalized_prefix.to_string_lossy().into_owned()),
+                )
+            };
+            dir_queue.push_back(start_path.clone());
+
+            while let Some(dir) = dir_queue.pop_front() {
+                let mut entries = trace_try!(async_fs::read_dir(dir).await);
+                while let Some(entry) = entries.next().await {
+                    let entry = trace_try!(entry);
+                    let file_type = trace_try!(entry.file_type().await);
+                    let file_path = entry.path();
+                    let key = trace_try!(file_path.strip_prefix(&bucket_path));
+                    let key_str = key.to_string_lossy().to_string().replace("\\", "/");
+
+                    if let Some(ref prefix) = filter_prefix {
+                        if !key_str.starts_with(prefix) {
+                            continue;
+                        }
                     }
-                }
 
-                if let Some(ref delimiter) = input.delimiter {
-                    if let Some(end) =
-                        key_str[input.prefix.as_deref().unwrap_or("").len()..].find(delimiter)
-                    {
-                        let common_prefix =
-                            key_str[..(input.prefix.as_deref().unwrap_or("").len()
-                                + end
-                                + delimiter.len())]
-                                .to_string();
-                        if !common_prefixes.contains(&common_prefix) {
-                            common_prefixes.push(common_prefix);
+                    let prefix_len = input.prefix.as_deref().unwrap_or("").len();
+                    if let Some(end) = key_str.get(prefix_len..).and_then(|s| s.find(delimiter)) {
+                        if let Some(common_prefix) =
+                            key_str.get(..(prefix_len + end + delimiter.len()))
+                        {
+                            let common_prefix = common_prefix.to_string();
+                            if !common_prefixes.contains(&common_prefix) {
+                                common_prefixes.push(common_prefix);
+                            }
                         }
                         continue;
                     }
+
+                    if file_type.is_dir() {
+                        dir_queue.push_back(file_path.clone());
+                    } else {
+                        let metadata = trace_try!(entry.metadata().await);
+                        let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
+                        let size = metadata.len();
+
+                        objects.push(Object {
+                            e_tag: None,
+                            key: Some(key_str),
+                            last_modified: Some(last_modified),
+                            owner: None,
+                            size: Some(trace_try!(size.try_into())),
+                            storage_class: None,
+                        });
+                    }
                 }
+            }
+        } else {
+            dir_queue.push_back(bucket_path.clone());
 
-                if file_type.is_dir() {
-                    dir_queue.push_back(file_path);
-                } else {
-                    let metadata = trace_try!(entry.metadata().await);
-                    let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
-                    let size = metadata.len();
+            while let Some(dir) = dir_queue.pop_front() {
+                let mut entries = trace_try!(async_fs::read_dir(dir).await);
+                while let Some(entry) = entries.next().await {
+                    let entry = trace_try!(entry);
+                    let file_type = trace_try!(entry.file_type().await);
+                    let file_path = entry.path();
+                    let key = trace_try!(file_path.strip_prefix(&bucket_path));
+                    let key_str = key.to_string_lossy().to_string().replace("\\", "/");
 
-                    objects.push(Object {
-                        e_tag: None,
-                        key: Some(key_str),
-                        last_modified: Some(last_modified),
-                        owner: None,
-                        size: Some(trace_try!(size.try_into())),
-                        storage_class: None,
-                    });
+                    if file_type.is_dir() {
+                        dir_queue.push_back(file_path.clone());
+                    } else {
+                        let metadata = trace_try!(entry.metadata().await);
+                        let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
+                        let size = metadata.len();
+
+                        objects.push(Object {
+                            e_tag: None,
+                            key: Some(key_str),
+                            last_modified: Some(last_modified),
+                            owner: None,
+                            size: Some(trace_try!(size.try_into())),
+                            storage_class: None,
+                        });
+                    }
                 }
             }
         }
@@ -656,7 +718,6 @@ impl S3Storage for FileSystem {
             let rhs_key = rhs.key.as_deref().unwrap_or("");
             lhs_key.cmp(rhs_key)
         });
-
         let output = ListObjectsV2Output {
             key_count: Some(trace_try!(
                 (objects.len() + common_prefixes.len()).try_into()
@@ -665,14 +726,15 @@ impl S3Storage for FileSystem {
             delimiter: input.delimiter,
             encoding_type: input.encoding_type,
             name: Some(input.bucket),
-            common_prefixes: Some(
-                common_prefixes
-                    .into_iter()
-                    .map(|prefix| CommonPrefix {
-                        prefix: Some(prefix),
-                    })
-                    .collect(),
-            ),
+            // common_prefixes: Some(
+            //     common_prefixes
+            //         .into_iter()
+            //         .map(|prefix| CommonPrefix {
+            //             prefix: Some(prefix),
+            //         })
+            //         .collect(),
+            // ),
+            common_prefixes: None,
             is_truncated: None,
             max_keys: None,
             prefix: input.prefix,

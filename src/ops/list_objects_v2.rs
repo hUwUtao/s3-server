@@ -97,9 +97,10 @@ impl S3Output for ListObjectsV2Output {
                     w.opt_element("Delimiter", self.delimiter)?;
                     w.opt_element("MaxKeys", self.max_keys.map(|k| k.to_string()))?;
                     w.opt_stack("CommonPrefixes", self.common_prefixes, |w, prefixes| {
-                        w.iter_element(prefixes.into_iter(), |w, common_prefix| {
-                            w.opt_element("Prefix", common_prefix.prefix)
-                        })
+                        for prefix in prefixes {
+                            w.opt_element("Prefix", prefix.prefix)?;
+                        }
+                        Ok(())
                     })?;
                     w.opt_element("EncodingType", self.encoding_type)?;
                     w.opt_element("KeyCount", self.key_count.map(|k| k.to_string()))?;

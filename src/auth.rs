@@ -246,10 +246,10 @@ impl S3Auth for ACLAuth {
     async fn get_secret_access_key(
         &self,
         context: &mut S3AuthContext<'_>,
-        accessId: &str,
+        access_id: &str,
     ) -> Result<String, S3AuthError> {
-        if let Some(token) = self.indexdb.query_token(&accessId) {
-            context.access_id = Some(self.indexdb.hash_access_id(accessId));
+        if let Some(token) = self.indexdb.query_token(&access_id) {
+            context.access_id = Some(self.indexdb.hash_access_id(access_id));
             return Ok(token.get_sec_str());
         }
         Err(S3AuthError::NotSignedUp)
@@ -261,8 +261,8 @@ impl S3Auth for ACLAuth {
         handler: &Box<dyn S3Handler + Send + Sync>,
     ) -> Result<(), S3AuthError> {
         let operation = format!("{:?}", handler.kind());
-        if let Some(accessId) = ctx.auth.access_id {
-            if let Some(perms) = self.indexdb.get_roles_as_permission(&accessId) {
+        if let Some(access_id) = ctx.auth.access_id {
+            if let Some(perms) = self.indexdb.get_roles_as_permission(&access_id) {
                 let (bucket, path) = match ctx.path {
                     S3Path::Root => ("*", None),
                     S3Path::Bucket { bucket } => (bucket, None),
