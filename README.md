@@ -37,7 +37,7 @@ s3-server --help
 
 ## Usage
 
-You must generate `target/pub.pem` which also require a private key to sign token. Yet, token are infered, which is really costy
+~~You must generate `target/pub.pem` which also require a private key to sign token. Yet, token are infered, which is really costy~~
 
 ```
 s3-server 0.2.0
