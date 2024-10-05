@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt::{self, Debug, Display};
 
 use backtrace::Backtrace;
+use tracing::debug;
 use tracing_error::SpanTrace;
 
 /// Type representing an error response
@@ -214,6 +215,8 @@ pub enum S3AuthError {
     Unauthorized,
     /// Authentication service unavailable
     AuthServiceUnavailable,
+    /// Invalid origin
+    InvalidOrigin,
     /// Other errors
     Other(S3Error),
 }
@@ -226,17 +229,9 @@ impl Display for S3AuthError {
 
 impl Error for S3AuthError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match *self {
-            Self::NotSignedUp => None,
-            Self::InvalidToken => None,
-            Self::ExpiredToken => None,
-            Self::InsufficientScope => None,
-            Self::InvalidCredentials => None,
-            Self::TokenVerificationFailed => None,
-            Self::MissingToken => None,
-            Self::Unauthorized => None,
-            Self::AuthServiceUnavailable => None,
-            Self::Other(ref e) => Some(e),
+        match self {
+            Self::Other(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -249,6 +244,7 @@ impl From<S3Error> for S3AuthError {
 
 impl S3AuthError {
     pub fn into_generic_error(self) -> S3Error {
+        debug!("Encounter auth error {}", self);
         match self {
             Self::NotSignedUp => S3Error::new(
                 S3ErrorCode::NotSignedUp,
@@ -280,6 +276,7 @@ impl S3AuthError {
                 S3ErrorCode::ServiceUnavailable,
                 "Authentication service is unavailable.",
             ),
+            Self::InvalidOrigin => S3Error::new(S3ErrorCode::AccessDenied, "Origin mismatch"),
             Self::Other(e) => e,
         }
     }

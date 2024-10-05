@@ -26,6 +26,10 @@ binary = [
 name = "s3-server"
 required-features = ["binary"]
 
+[[bin]]
+name = "s3-sec"
+required-features = ["binary"]
+
 [dependencies]
 
 anyhow = { version = "1.0.57", optional = true }

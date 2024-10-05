@@ -72,7 +72,7 @@ pub fn setup_tracing() {
 
     #[cfg(not(feature = "tokio_unstable"))]
     tracing_subscriber::fmt()
-        .event_format(fmt::format::Format::default().pretty())
+        // .event_format(fmt::format::Format::default().pretty())
         .with_env_filter(EnvFilter::from_default_env())
         .with_timer(UtcTime::rfc_3339())
         .finish()
@@ -88,11 +88,11 @@ async fn main() -> Result<()> {
     let args: Args = Args::from_args();
     // setup the storage
     let fs = FileSystem::new(&args.fs_root)?;
-    debug!(?fs);
+    // debug!(?fs);
 
     // setup the service
     let service = S3Service::new(fs, args.fs_root)?;
-    debug!(?service);
+    // debug!(?service);
 
     // report memory
     // if let (Some(access_key), Some(secret_key)) = (args.access_key, args.secret_key) {

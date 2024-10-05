@@ -14,8 +14,6 @@ mod authorization {
     use std::path::{Path, PathBuf};
 
     use crate::errors::S3AuthError;
-    use crate::ops::S3Handler;
-    
 
     use path_matchers::{glob, PathMatcher, PatternError};
     use regex::Regex;
@@ -58,22 +56,8 @@ mod authorization {
             let bucket_matcher = Regex::new(&glob_to_regex(&parts[2]))
                 .map_err(|_| S3AuthError::InvalidCredentials)?;
 
-            // let (path_matcher, path_matcher_inverted) = if parts.len() == 4 {
-            //     let (inverted, pattern) = if {
-            //         (true, &parts[3][1..])
-            //     } else {
-            //         (false, parts[3])
-            //     };
-            //     let regex = Regex::new(&glob_to_regex(pattern))
-            //         .map_err(|_| S3AuthError::InvalidCredentials)?;
-            //     (Some(regex), inverted)
-            // } else {
-            //     (None, false)
-            // };
-
             let (path_matcher, path_matcher_inverted) = if parts.len() == 4 {
                 (
-                    // Some(glob(parts[3]).unwrap().boxed()),
                     Some(
                         Matcher::new(parts[3].to_string())
                             .map_err(|_| S3AuthError::InvalidCredentials)?,
@@ -104,7 +88,7 @@ mod authorization {
             }
             return if let Some(ref path_matcher) = self.path_matcher {
                 if let Some(path) = path {
-                    // info!("matching");
+                    debug!("attempt to path matching");
                     let matches = path_matcher.matches(&PathBuf::from(path));
                     matches ^ self.path_matcher_inverted
                 } else {
@@ -170,6 +154,7 @@ mod authorization {
 pub use authorization::{Matcher, Permission};
 
 use async_trait::async_trait;
+use tracing::debug;
 
 /// S3 Authentication Provider
 
@@ -184,13 +169,13 @@ pub trait S3Auth {
 
     async fn authorize_query(
         &self,
-        ctx: &'_ ReqContext<'_>,
-        handler: &Box<dyn S3Handler + Send + Sync>,
+        _ctx: &'_ ReqContext<'_>,
+        _handler: &Box<dyn S3Handler + Send + Sync>,
     ) -> Result<(), S3AuthError> {
         Err(S3AuthError::AuthServiceUnavailable)
     }
 
-    async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
+    async fn authorize_public_query(&self, _ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
         Err(S3AuthError::Unauthorized)
     }
 }
@@ -253,7 +238,7 @@ impl S3Auth for ACLAuth {
         access_id: &str,
     ) -> Result<String, S3AuthError> {
         if let Some(token) = self.indexdb.query_token(&access_id) {
-            context.access_id = Some(self.indexdb.hash_access_id(access_id));
+            context.access_id = Some(self.indexdb.hash_string_unsafe(access_id));
             return Ok(token.get_sec_str());
         }
         Err(S3AuthError::NotSignedUp)
@@ -284,13 +269,24 @@ impl S3Auth for ACLAuth {
                     S3Path::Bucket { bucket } => (bucket, None),
                     S3Path::Object { bucket, key } => (bucket, Some(key)),
                 };
+
+                if perms.len() == 0 {
+                    return Err(S3AuthError::InsufficientScope);
+                }
+
                 if perms.iter().any(|i| i.matches(&operation, bucket, path)) {
-                    return Ok(());
+                    // Implement origin check
+                    if let Some(token) = self.indexdb.query_token_prehashed(access_id) {
+                        if (token.origin == bucket) ^ self.indexdb.validate_orign(bucket, &token) {
+                            return Ok(());
+                        } else {
+                            return Err(S3AuthError::InvalidOrigin);
+                        }
+                    }
                 }
             }
         }
-        // else if {}
-        Err(S3AuthError::Unauthorized)
+        Err(S3AuthError::InsufficientScope)
     }
 }
 

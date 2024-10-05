@@ -2,6 +2,7 @@ use std::{collections::HashMap, u64};
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::jwt::Claims;
 pub(crate) mod database;
@@ -9,17 +10,17 @@ pub(crate) mod database;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Token {
     /// Billing Reported Subject
-    sub: u64,
+    pub sub: u64,
     /// Security Issued at
-    iat: u64,
+    pub iat: u64,
     /// Unreported cryptographic key. An unhashed version of secret key.
-    jti: u128,
+    pub jti: u128,
     /// Security Expire at
-    exp: Option<u64>,
+    pub exp: Option<u64>,
     /// Origin bucket AD
-    origin: String,
+    pub origin: String,
     /// Roles
-    roles: Vec<String>,
+    pub roles: Vec<String>,
 }
 
 impl Into<Claims> for &Token {
@@ -36,18 +37,38 @@ impl Into<Claims> for &Token {
 
 impl Token {
     pub fn get_sec_str(&self) -> String {
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.jti.to_be_bytes())
+        use sha2::{Digest, Sha512};
+
+        let mut hasher = Sha512::new();
+        hasher.update(self.sub.to_be_bytes());
+        hasher.update(self.iat.to_be_bytes());
+        hasher.update(self.jti.to_be_bytes());
+        let hashed = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            [0x48, 0x45]
+                .iter()
+                .copied()
+                .chain(hasher.finalize().iter().copied())
+                .collect::<Vec<u8>>(),
+        );
+
+        debug!("{}", &hashed);
+
+        hashed
+    }
+
+    pub fn set_jti(&mut self, new: u128) {
+        self.jti = new;
     }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BucketConfigFile {
     /// Which paths should be publiced
-    public: Vec<String>,
+    pub public: Vec<String>,
     /// A list of bucket, which token is defined in that bucket is allowed here. Determined by token's origin claim
-    allows: Vec<String>,
+    pub allows: Vec<String>,
     /// Who owns this bucket? metadata preserved for future query
-    owners: Vec<u64>,
+    pub owners: Vec<u64>,
     /// The tokens
-    tokens: HashMap<String, Token>,
+    pub tokens: HashMap<String, Token>,
 }

@@ -200,14 +200,11 @@ impl S3Service {
 
         for handler in &self.handlers {
             if handler.is_match(&ctx) {
-                // if let Some(claims) = &ctx.auth.claims {
-                //     crate::auth::authorize(&claims.roles, handler, &ctx)
-                //         .map_err(|i| i.into_generic_error())?;
-                // }
                 if let Some(auth) = self.auth.as_deref() {
                     auth.authorize_query(&ctx, handler)
                         .await
                         .map_err(|i| i.into_generic_error())?;
+                    debug!("Authorized");
                 }
                 return handler.handle(&mut ctx, &*self.storage).await;
             }
@@ -329,40 +326,9 @@ async fn fetch_secret_key(
     auth: &(dyn S3Auth + Send + Sync),
     access_key: &str,
 ) -> S3Result<String> {
-    match auth.get_secret_access_key(ctx, access_key).await {
-        Ok(secret_key) => Ok(secret_key),
-        Err(S3AuthError::NotSignedUp) => {
-            Err(code_error!(NotSignedUp, "Your account is not signed up"))
-        }
-        Err(S3AuthError::InvalidToken) => Err(code_error!(
-            InvalidAccessKeyId,
-            "The AWS access key ID you provided does not exist in our records."
-        )),
-        Err(S3AuthError::Unauthorized) => Err(code_error!(AccessDenied, "Access Denied")),
-        Err(S3AuthError::AuthServiceUnavailable) => Err(code_error!(
-            ServiceUnavailable,
-            "Auth service is unavailable"
-        )),
-        Err(S3AuthError::ExpiredToken) => {
-            Err(code_error!(ExpiredToken, "The provided token has expired."))
-        }
-        Err(S3AuthError::InsufficientScope) => Err(code_error!(
-            AccessDenied,
-            "Insufficient scope for this operation."
-        )),
-        Err(S3AuthError::MissingToken) => {
-            Err(code_error!(AccessDenied, "Missing authentication token."))
-        }
-        Err(S3AuthError::TokenVerificationFailed) => Err(code_error!(
-            InvalidAccessKeyId,
-            "Token verification failed."
-        )),
-        Err(S3AuthError::InvalidCredentials) => Err(code_error!(
-            InvalidAccessKeyId,
-            "The provided credentials are invalid."
-        )),
-        Err(S3AuthError::Other(msg)) => Err(internal_error!(msg)),
-    }
+    auth.get_secret_access_key(ctx, access_key)
+        .await
+        .map_err(|f| f.into_generic_error())
 }
 
 /// check post signature (v4)

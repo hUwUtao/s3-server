@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::auth::{Matcher, Permission};
 
@@ -30,31 +30,15 @@ impl IndexDB {
     fn parse_roles(&self, roles: &[String]) -> Vec<Permission> {
         roles
             .iter()
-            .filter_map(|role| Permission::new(role).ok())
+            .filter_map(|role| {
+                Permission::new(role)
+                    .map_err(|e| {
+                        warn!("permparse failed: {}", e);
+                        e
+                    })
+                    .ok()
+            })
             .collect()
-    }
-
-    pub fn report_memory_usage(&self) -> String {
-        use std::mem::size_of;
-        let config_size = self.indexed_config.len() * size_of::<(String, BucketConfigFile)>();
-        let token_size = self.indexed_token.len() * size_of::<(u64, String)>();
-        let locked_size = self.locked_bucket.len() * size_of::<String>();
-        let total_size = config_size + token_size + locked_size;
-
-        format!(
-            "Memory Usage Report:\n\
-             - Indexed Configs: {} buckets (approx. {} bytes)\n\
-             - Indexed Tokens: {} tokens (approx. {} bytes)\n\
-             - Locked Buckets: {} buckets (approx. {} bytes)\n\
-             - Total Estimated Size: {} bytes",
-            self.indexed_config.len(),
-            config_size,
-            self.indexed_token.len(),
-            token_size,
-            self.locked_bucket.len(),
-            locked_size,
-            total_size
-        )
     }
 
     fn lock_bucket(&mut self, bucket_name: String) {
@@ -84,12 +68,56 @@ impl IndexDB {
         false
     }
 
+    pub fn print_indexed_roles(&self) {
+        println!("Indexed Config:");
+        for (bucket, config) in &self.indexed_config {
+            println!("Bucket: {}", bucket);
+            println!("  Public: {:?}", config.public);
+            println!("  Allows: {:?}", config.allows);
+            println!("  Owners: {:?}", config.owners);
+            println!("  Tokens: {}", config.tokens.len());
+        }
+
+        println!("\nIndexed Tokens:");
+        for (token_hash, (bucket, key)) in &self.indexed_token {
+            println!("Token Hash: {}", token_hash);
+            println!("  Bucket: {}", bucket);
+            println!("  Key: {}", key);
+        }
+
+        println!("\nIndexed Roles:");
+        for (token_hash, permissions) in &self.indexed_roles {
+            println!("Token Hash: {}", token_hash);
+            for permission in permissions.iter() {
+                println!("  - {:?}", permission);
+            }
+        }
+
+        println!("\nIndexed Public:");
+        for (bucket, matchers) in &self.indexed_public {
+            println!("Bucket: {}", bucket);
+            for matcher in matchers.iter() {
+                println!("  - {:?}", matcher);
+            }
+        }
+
+        println!("\nLocked Buckets:");
+        for bucket in &self.locked_bucket {
+            println!("  - {}", bucket);
+        }
+    }
+
     pub fn get_roles_as_permission(&self, token: &u64) -> Option<Arc<Vec<Permission>>> {
-        self.indexed_roles.get(token).map(|t| t.to_owned())
+        self.print_indexed_roles();
+        self.indexed_roles.get(token).cloned()
     }
 
     pub fn query_token(&self, token: &str) -> Option<Token> {
-        let token_hash = self.hash_access_id(token);
+        let token_hash = self.hash_string_unsafe(token);
+        self.query_token_prehashed(token_hash)
+    }
+
+    pub fn query_token_prehashed(&self, token_hash: u64) -> Option<Token> {
         self.indexed_token
             .get(&token_hash)
             .and_then(|(bucket, key)| {
@@ -158,7 +186,7 @@ impl IndexDB {
             let _ = db.indexed_config.insert(null_bucket.clone(), null_cfg);
 
             // Index the volatile token
-            let token_hash = db.hash_access_id("");
+            let token_hash = db.hash_string_unsafe("");
             let _ = db
                 .indexed_token
                 .insert(token_hash, (null_bucket, String::new()));
@@ -171,7 +199,7 @@ impl IndexDB {
         // Remove the existing config and its tokens
         if let Some(old_config) = self.indexed_config.remove(bucket_name) {
             for (key, _) in old_config.tokens {
-                let token_index = self.hash_access_id(&key);
+                let token_index = self.hash_string_unsafe(&key);
                 let _ = self.indexed_token.remove(&token_index);
                 let _ = self.indexed_roles.remove(&token_index);
             }
@@ -192,33 +220,12 @@ impl IndexDB {
         Ok(())
     }
 
-    pub(crate) fn hash_access_id(&self, token: &str) -> u64 {
-        let bytes = base64::decode(token).unwrap_or_default();
-        let token_bytes = &bytes[bytes.len().saturating_sub(16)..];
-        let (hash, _) = mur3::murmurhash3_x64_128(token_bytes, 0);
+    pub(crate) fn hash_string_unsafe(&self, token: &str) -> u64 {
+        let token_bytes = token.as_bytes();
+        let (hash, _) = mur3::murmurhash3_x64_128(token_bytes, 727);
         hash
     }
 
-    fn is_base64(s: &str) -> bool {
-        base64::decode(s).is_ok()
-    }
-
-    fn hash_and_encode(key: &str) -> String {
-        let bytes = key.as_bytes();
-        let hash_bytes = mur3::murmurhash3_x64_128(&bytes, 0);
-        base64::encode(&[hash_bytes.0.to_be_bytes(), hash_bytes.1.to_be_bytes()].concat())
-    }
-
-    fn write_config(&self, bucket_name: &str, config: &BucketConfigFile) -> std::io::Result<()> {
-        let rules_path = self
-            .fs_root
-            .join("sys")
-            .join(bucket_name)
-            .join(".rules.json");
-        let content = serde_json::to_string_pretty(config)?;
-        std::fs::write(rules_path, content)?;
-        Ok(())
-    }
     pub fn load(&mut self) -> std::io::Result<()> {
         let sys_dir = self.fs_root.join("sys");
         if !sys_dir.exists() {
@@ -258,6 +265,7 @@ impl IndexDB {
         info!("Loaded {} rules.", entries);
         Ok(())
     }
+
     fn get_config_file_path(&self, bucket_name: &str) -> PathBuf {
         self.fs_root
             .join("sys")
@@ -274,7 +282,7 @@ impl IndexDB {
     /// Note: insert into indexed token table with key is dissected buffer
     fn index_tokens(&mut self, bucket_name: &str, config: &BucketConfigFile) {
         for (key, token) in &config.tokens {
-            let token_index = self.hash_access_id(key);
+            let token_index = self.hash_string_unsafe(key);
             let _ = self
                 .indexed_token
                 .insert(token_index, (bucket_name.to_string(), key.to_string()));
