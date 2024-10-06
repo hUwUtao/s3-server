@@ -665,7 +665,11 @@ impl S3Storage for FileSystem {
         debug!("Bucket path: {:?}", bucket_path);
 
         let (search_dir, prefix_filter) =
-            self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter);
+            if input.delimiter.is_none() || input.prefix.as_deref().unwrap_or("").is_empty() {
+                (PathBuf::new(), String::new())
+            } else {
+                self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter)
+            };
         let search_path = bucket_path.join(&search_dir);
         debug!("Search path: {:?}", search_path);
 
@@ -681,7 +685,8 @@ impl S3Storage for FileSystem {
 
         let (mut objects, common_prefixes) = trace_try!(
             self.list_contents(
-                input.prefix.is_some(),
+                input.delimiter.is_some()
+                    && input.prefix.as_deref().map_or(false, |p| !p.is_empty()),
                 &bucket_path,
                 &search_path,
                 &prefix_filter,
@@ -710,7 +715,9 @@ impl S3Storage for FileSystem {
 
         Ok(ListObjectsOutput {
             contents: Some(objects),
-            common_prefixes: if input.delimiter.is_some() {
+            common_prefixes: if input.delimiter.is_some()
+                && !input.prefix.as_deref().unwrap_or("").is_empty()
+            {
                 Some(
                     common_prefixes
                         .into_iter()
@@ -738,7 +745,11 @@ impl S3Storage for FileSystem {
         debug!("Bucket path: {:?}", bucket_path);
 
         let (search_dir, prefix_filter) =
-            self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter);
+            if input.delimiter.is_none() || input.prefix.as_deref().unwrap_or("").is_empty() {
+                (PathBuf::new(), String::new())
+            } else {
+                self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter)
+            };
         let search_path = bucket_path.join(&search_dir);
         debug!("Search path: {:?}", search_path);
 
@@ -755,7 +766,8 @@ impl S3Storage for FileSystem {
 
         let (mut objects, common_prefixes) = trace_try!(
             self.list_contents(
-                input.prefix.is_some(),
+                input.delimiter.is_some()
+                    && input.prefix.as_deref().map_or(false, |p| !p.is_empty()),
                 &bucket_path,
                 &search_path,
                 &prefix_filter,
@@ -787,7 +799,9 @@ impl S3Storage for FileSystem {
 
         Ok(ListObjectsV2Output {
             contents: Some(objects),
-            common_prefixes: if input.delimiter.is_some() {
+            common_prefixes: if input.delimiter.is_some()
+                && !input.prefix.as_deref().unwrap_or("").is_empty()
+            {
                 Some(
                     common_prefixes
                         .iter()

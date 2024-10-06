@@ -299,20 +299,23 @@ impl S3Auth for RwLock<ACLAuth> {
             if let (Some(perms), Some(token)) = (perms, token) {
                 if perms.iter().any(|i| i.matches(&operation, bucket, path)) {
                     if operation == S3Operation::BucketCreate
-                        && !storage
-                            .is_bucket_exist(bucket)
-                            .await
-                            .map_err(|_| S3AuthError::InvalidBucket)?
-                        && storage
-                            .is_bucket_exist(&token.origin)
-                            .await
-                            .map_err(|_| S3AuthError::InvalidBucket)?
+                        && !storage.is_bucket_exist(bucket).await.map_err(|_| {
+                            S3AuthError::InvalidBucket(
+                                "Unexpected: your token origin does not exist".to_string(),
+                            )
+                        })?
+                        && storage.is_bucket_exist(&token.origin).await.map_err(|_| {
+                            S3AuthError::InvalidBucket("An bucket already exist".to_string())
+                        })?
                     {
+                        debug!("Now creating new bucket");
                         let mut write_guard = self.write().await;
                         return write_guard
                             .indexdb
                             .create_bucket_from(bucket, &token.origin)
-                            .map_err(|_| S3AuthError::InvalidBucket);
+                            .map_err(|e| {
+                                S3AuthError::InvalidBucket(format!("Upon create bucket, {}", e))
+                            });
                     }
                     let is_valid_origin = {
                         let read_guard = self.read().await;

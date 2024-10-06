@@ -35,6 +35,7 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
+use hyper::header::HeaderValue;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -134,6 +135,15 @@ impl S3Service {
     pub async fn hyper_call(&self, req: Request) -> Result<Response, BoxStdError> {
         #[cfg(debug_assertions)]
         debug!("req = \n{:#?}", req);
+
+        if req.uri().path() == "/favicon.ico" {
+            let favicon = include_bytes!("../assets/favicon.ico");
+            let mut res = Response::new(Body::from(favicon.to_vec()));
+            let _ = res
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("image/x-icon"));
+            return Ok(res);
+        }
 
         if req.uri().path() == "/metrics" {
             // Handle metrics endpoint
