@@ -12,4 +12,5 @@ pub use self::xml::XmlWriterExt;
 
 pub mod body;
 pub mod crypto;
+pub mod metrics;
 pub mod time;

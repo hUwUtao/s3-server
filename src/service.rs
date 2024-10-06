@@ -12,6 +12,8 @@ use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
 use crate::signature_v4;
 use crate::storage::S3Storage;
+use crate::utils::metrics::Mesurable;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::streams::aws_chunked_stream::AwsChunkedStream;
@@ -27,10 +29,12 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
+use md5::digest::HashMarker;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -131,6 +135,19 @@ impl S3Service {
         #[cfg(debug_assertions)]
         debug!("req = \n{:#?}", req);
 
+        if req.uri().path() == "/metrics" {
+            // Handle metrics endpoint
+            let metrics = self.metrics().await;
+            let mut sorted_metrics: Vec<_> = metrics.into_iter().collect();
+            sorted_metrics.sort_by(|a, b| a.0.cmp(&b.0));
+            let metrics_str = sorted_metrics
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Ok(Response::new(Body::from(metrics_str)));
+        }
+
         let ret = match self.handle(req).await {
             Ok(resp) => Ok(resp),
             Err(err) => err.into_xml_response().try_into_response(),
@@ -201,6 +218,18 @@ impl S3Service {
             return Err(not_supported!("The operation is not supported yet."));
         }
         Err(not_supported!("Did not present any authentication service"))
+    }
+}
+
+#[async_trait]
+impl Mesurable for S3Service {
+    async fn metrics(&self) -> HashMap<String, String> {
+        let mut table = HashMap::new();
+        if let Some(auth) = &self.auth {
+            let auth_metrics = auth.metrics().await;
+            table.extend(auth_metrics);
+        }
+        table
     }
 }
 

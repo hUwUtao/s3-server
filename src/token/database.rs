@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use serde_json;
 use std::{
     collections::HashMap,
@@ -6,7 +7,10 @@ use std::{
 };
 use tracing::{info, warn};
 
-use crate::auth::{Matcher, Permission};
+use crate::{
+    auth::{Matcher, Permission},
+    utils::metrics::Mesurable,
+};
 
 use super::{BucketConfigFile, Token};
 #[derive(Debug)]
@@ -329,5 +333,83 @@ impl IndexDB {
                 .indexed_public
                 .insert(bucket_name.to_string(), Arc::new(matchers));
         }
+    }
+}
+
+#[async_trait]
+impl Mesurable for IndexDB {
+    async fn metrics(&self) -> HashMap<String, String> {
+        let mut metrics = HashMap::new();
+
+        macro_rules! reportable {
+            ($name:expr, $value:expr) => {
+                let _ = metrics.insert($name.to_string(), $value.to_string());
+            };
+            ($name:expr, $field:expr, $type:ty) => {
+                let _ = metrics.insert(
+                    $name.to_string(),
+                    (std::mem::size_of_val($field)
+                        + $field.capacity() * std::mem::size_of::<$type>())
+                    .to_string(),
+                );
+            };
+        }
+
+        reportable!("indexed_config_count", self.indexed_config.len());
+        reportable!("indexed_token_count", self.indexed_token.len());
+        reportable!("indexed_roles_count", self.indexed_roles.len());
+        reportable!("indexed_public_count", self.indexed_public.len());
+        reportable!("locked_bucket_count", self.locked_bucket.len());
+
+        let total_tokens: usize = self
+            .indexed_config
+            .values()
+            .map(|config| config.tokens.len())
+            .sum();
+        reportable!("total_tokens", total_tokens);
+
+        let total_public_matchers: usize = self
+            .indexed_public
+            .values()
+            .map(|matchers| matchers.len())
+            .sum();
+        reportable!("total_public_matchers", total_public_matchers);
+
+        // Calculate memory usage for each table
+        reportable!(
+            "indexed_config_bytes",
+            &self.indexed_config,
+            (String, BucketConfigFile)
+        );
+        reportable!(
+            "indexed_token_bytes",
+            &self.indexed_token,
+            (u64, (String, String))
+        );
+        reportable!(
+            "indexed_roles_bytes",
+            &self.indexed_roles,
+            (u64, Arc<Vec<Permission>>)
+        );
+        reportable!(
+            "indexed_public_bytes",
+            &self.indexed_public,
+            (String, Arc<Vec<Matcher>>)
+        );
+        reportable!("locked_bucket_bytes", &self.locked_bucket, String);
+
+        // Calculate total memory usage
+        let total_bytes = metrics["indexed_config_bytes"]
+            .parse::<usize>()
+            .unwrap_or(0)
+            + metrics["indexed_token_bytes"].parse::<usize>().unwrap_or(0)
+            + metrics["indexed_roles_bytes"].parse::<usize>().unwrap_or(0)
+            + metrics["indexed_public_bytes"]
+                .parse::<usize>()
+                .unwrap_or(0)
+            + metrics["locked_bucket_bytes"].parse::<usize>().unwrap_or(0);
+        reportable!("total_bytes", total_bytes);
+
+        metrics
     }
 }

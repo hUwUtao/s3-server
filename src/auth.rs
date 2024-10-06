@@ -1,11 +1,13 @@
 //! S3 Authentication
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::errors::S3AuthError;
 use crate::ops::{ReqContext, S3Operation};
 use crate::path::S3Path;
 use crate::token::database::IndexDB;
+use crate::utils::metrics::Mesurable;
 use crate::S3Storage;
 use crate::{dto::S3AuthContext, ops::S3Handler};
 
@@ -161,7 +163,7 @@ use tokio::sync::RwLock;
 /// S3 Authentication Provider
 
 #[async_trait]
-pub trait S3Auth {
+pub trait S3Auth: Mesurable {
     /// lookup `secret_access_key` by `access_key_id`
     async fn get_secret_access_key(
         &self,
@@ -315,6 +317,13 @@ impl S3Auth for RwLock<ACLAuth> {
             }
         }
         Err(S3AuthError::InsufficientScope)
+    }
+}
+
+#[async_trait]
+impl Mesurable for RwLock<ACLAuth> {
+    async fn metrics(&self) -> HashMap<String, String> {
+        self.read().await.indexdb.metrics().await
     }
 }
 
