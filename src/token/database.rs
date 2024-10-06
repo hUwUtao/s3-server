@@ -24,7 +24,7 @@ pub struct IndexDB {
     /// Index by K token hash, V is permission object
     indexed_roles: HashMap<u64, Arc<Vec<Permission>>>,
     /// Index by k bucket name, V is public matcher
-    indexed_public: HashMap<String, Arc<Vec<Matcher>>>,
+    indexed_public: HashMap<String, Arc<(bool, Vec<Matcher>)>>,
     /// Buckets that should be ignored during reload
     locked_bucket: Vec<String>,
 }
@@ -82,6 +82,7 @@ impl IndexDB {
 
         let new_config = BucketConfigFile {
             public: Vec::new(),
+            indexable: None,
             allows: vec![origin_bucket.to_owned()],
             owners: source_config.owners.clone(),
             tokens: HashMap::new(),
@@ -155,13 +156,13 @@ impl IndexDB {
             })
     }
 
-    pub fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> bool {
+    pub fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> (bool, bool) {
         if let Some(matchs) = self.indexed_public.get(bucket) {
-            if matchs.iter().any(|m| m.matches(path)) {
-                return true;
+            if matchs.1.iter().any(|m| m.matches(path)) {
+                return (true, matchs.0);
             }
         }
-        false
+        (false, false)
     }
 
     pub fn initiate_reload(&mut self, bucket_name: &str) -> std::io::Result<()> {
@@ -194,6 +195,7 @@ impl IndexDB {
             let null_bucket = String::new();
             let mut null_cfg = BucketConfigFile {
                 public: Vec::new(),
+                indexable: None,
                 allows: Vec::new(),
                 owners: Vec::new(),
                 tokens: HashMap::new(),
@@ -329,9 +331,10 @@ impl IndexDB {
             .filter_map(|path| Matcher::new(path.to_string()).ok())
             .collect::<Vec<Matcher>>();
         if !matchers.is_empty() {
-            let _ = self
-                .indexed_public
-                .insert(bucket_name.to_owned(), Arc::new(matchers));
+            let _ = self.indexed_public.insert(
+                bucket_name.to_owned(),
+                Arc::new((config.indexable.unwrap_or(false), matchers)),
+            );
         }
     }
 }
@@ -371,7 +374,7 @@ impl Mesurable for IndexDB {
         let total_public_matchers: usize = self
             .indexed_public
             .values()
-            .map(|matchers| matchers.len())
+            .map(|matchers| matchers.1.len())
             .sum();
         reportable!("total_public_matchers", total_public_matchers);
 

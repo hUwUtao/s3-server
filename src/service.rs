@@ -7,6 +7,7 @@ use crate::dto::S3AuthContext;
 use crate::errors::{S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
+use crate::ops::S3Operation;
 use crate::ops::{ReqContext, S3Handler};
 use crate::output::S3Output;
 use crate::path::{S3Path, S3PathErrorKind};
@@ -200,8 +201,20 @@ impl S3Service {
         }
 
         if let Some(auth) = self.auth.as_ref() {
-            if ctx.path.is_object() && auth.authorize_public_query(&ctx).await.is_ok() {
-                return self.handlers[0].handle(&mut ctx, &*self.storage).await;
+            for handler in &self.handlers {
+                if !match handler.kind() {
+                    S3Operation::ObjectGet => true,
+                    S3Operation::ObjectList => true,
+                    _ => false,
+                } {
+                    break;
+                }
+                if handler.is_match(&ctx) {
+                    debug!("Testing handler");
+                    if auth.authorize_public_query(&ctx).await.is_ok() {
+                        return handler.handle(&mut ctx, &*self.storage).await;
+                    }
+                }
             }
             check_signature(&mut ctx, auth.as_ref()).await?;
             for handler in &self.handlers {

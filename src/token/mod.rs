@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::jwt::Claims;
-pub(in crate) mod database;
+pub(crate) mod database;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Token {
@@ -65,6 +65,8 @@ impl Token {
 pub struct BucketConfigFile {
     /// Which paths should be publiced
     pub public: Vec<String>,
+    /// Do public paths indexible?
+    pub indexable: Option<bool>,
     /// A list of bucket, which token is defined in that bucket is allowed here. Determined by token's origin claim
     pub allows: Vec<String>,
     /// Who owns this bucket? metadata preserved for future query

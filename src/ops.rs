@@ -42,6 +42,8 @@ pub fn setup_handlers() -> Vec<Box<dyn S3Handler + Send + Sync + 'static>> {
     zst_handlers![
         // special order
         get_object,
+        list_objects,
+        list_objects_v2,
         //
         complete_multipart_upload,
         copy_object,
@@ -54,8 +56,6 @@ pub fn setup_handlers() -> Vec<Box<dyn S3Handler + Send + Sync + 'static>> {
         head_bucket,
         head_object,
         list_buckets,
-        list_objects,
-        list_objects_v2,
         put_object,
         upload_part,
     ]
@@ -70,7 +70,6 @@ pub enum S3Operation {
     /// For delete
     ObjectDelete,
     /// For listing
-    /// DEPRECATED! this is not a valid opt since it doesn't request path on server
     ObjectList,
 
     /// For query

@@ -159,6 +159,8 @@ pub use authorization::{Matcher, Permission};
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
+use tracing::debug;
+use tracing::field::debug;
 
 /// S3 Authentication Provider
 
@@ -254,10 +256,18 @@ impl S3Auth for RwLock<ACLAuth> {
     async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
         let readed = self.read().await;
         if let S3Path::Object { bucket, key } = ctx.path {
-            if readed
+            let (path_match, _) = readed
                 .indexdb
-                .query_is_match_indexed_public(bucket, Path::new(key))
-            {
+                .query_is_match_indexed_public(bucket, Path::new(key));
+            if path_match {
+                return Ok(());
+            }
+        }
+        if let S3Path::Bucket { bucket } = ctx.path {
+            let (path_match, indexable) = readed
+                .indexdb
+                .query_is_match_indexed_public(bucket, Path::new(""));
+            if path_match && indexable {
                 return Ok(());
             }
         }

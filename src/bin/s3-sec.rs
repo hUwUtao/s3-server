@@ -194,6 +194,7 @@ fn create_bucket(fs_root: PathBuf, bucket: String, owner_id: u64, ci: bool) -> R
 
     let config = BucketConfigFile {
         public: Vec::new(),
+        indexable: None,
         allows: vec![bucket.clone()],
         owners: vec![owner_id],
         tokens: [(token_key.clone(), token.clone())].into_iter().collect(),
