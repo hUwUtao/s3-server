@@ -60,6 +60,7 @@ path-absolutize = "3.0.13"
 path-matchers = "1.0.2"
 pin-project-lite = "0.2.8"
 quick-xml = { version = "0.36", features = ["serialize"] }
+rand = "0.8.5"
 regex = "1.5.5"
 rusoto_core = "0.48.0"
 rusoto_s3 = "0.48.0"

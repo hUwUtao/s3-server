@@ -6,7 +6,7 @@ on:
     branches:
       - master
   schedule: # https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#onschedule
-    - cron: '0 0 * * 0' # at midnight of each sunday
+    - cron: "0 0 * * 0" # at midnight of each sunday
 
 name: CI
 
@@ -98,7 +98,7 @@ jobs:
           pushd ./mint
 
           enabled_test_groups=("mc" "s3cmd")
-          
+
           mkdir tmp_build
           mkdir tmp_run_core
           for test_group_name in ${enabled_test_groups[@]}
@@ -125,7 +125,7 @@ jobs:
           EOF
 
           popd
-      
+
       - name: Build mint
         run: |
           pushd ./mint
@@ -135,11 +135,18 @@ jobs:
       - name: Build s3-server
         uses: actions-rs/cargo@v1
         with:
-          command: build 
+          command: build
           args: --features binary --bins --release
+
+      - name: Create test bucket and capture keys
+        run: |
+          mkdir -p data
+          output=$(cargo run --bin s3-sec create-bucket test 0 --ci)
+          echo "ACCESS_KEY=$(echo "$output" | sed -n '1p')" >> $GITHUB_ENV
+          echo "SECRET_KEY=$(echo "$output" | sed -n '2p')" >> $GITHUB_ENV
 
       - name: Run mint
         run: |
-          mkdir data
-          RUST_LOG=info ./scripts/s3-server.sh data --release 1>/dev/null &
-          ./scripts/mint.sh
+          RUST_LOG=info ./scripts/s3-server.sh storage --release test 1>/dev/null &
+          sleep 5  # Give the server some time to start
+          ACCESS_KEY=${{ env.ACCESS_KEY }} SECRET_KEY=${{ env.SECRET_KEY }} ./scripts/mint.sh

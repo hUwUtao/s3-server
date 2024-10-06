@@ -10,7 +10,5 @@ if [ "$2" == "--release" ]; then
 fi
 
 cargo run $RELEASE --features binary \
-    -- \
-    --access-key AKIAIOSFODNN7EXAMPLE \
-    --secret-key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
-	--fs-root $DATA_DIR
+				-- \
+				--fs-root $DATA_DIR
