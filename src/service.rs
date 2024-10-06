@@ -34,7 +34,6 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
-use md5::digest::HashMarker;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -142,7 +141,7 @@ impl S3Service {
             sorted_metrics.sort_by(|a, b| a.0.cmp(&b.0));
             let metrics_str = sorted_metrics
                 .iter()
-                .map(|(k, v)| format!("{}: {}", k, v))
+                .map(|(k, v)| format!("{k}: {v}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             return Ok(Response::new(Body::from(metrics_str)));
@@ -209,7 +208,7 @@ impl S3Service {
                 if handler.is_match(&ctx) {
                     auth.authorize_query(&ctx, handler, &self.storage)
                         .await
-                        .map_err(|i| i.into_generic_error())?;
+                        .map_err(super::errors::S3AuthError::into_generic_error)?;
                     debug!("Authorized");
                     return handler.handle(&mut ctx, &*self.storage).await;
                 }
@@ -347,7 +346,7 @@ async fn fetch_secret_key(
 ) -> S3Result<String> {
     auth.get_secret_access_key(ctx, access_key)
         .await
-        .map_err(|f| f.into_generic_error())
+        .map_err(super::errors::S3AuthError::into_generic_error)
 }
 
 /// check post signature (v4)

@@ -57,13 +57,13 @@ mod authorization {
             }
 
             let operations = parts[1].split(',').map(String::from).collect();
-            let bucket_matcher = Regex::new(&glob_to_regex(&parts[2]))
+            let bucket_matcher = Regex::new(&glob_to_regex(parts[2]))
                 .map_err(|_| S3AuthError::InvalidCredentials)?;
 
             let (path_matcher, path_matcher_inverted) = if parts.len() == 4 {
                 (
                     Some(
-                        Matcher::new(parts[3].to_string())
+                        Matcher::new(parts[3].to_owned())
                             .map_err(|_| S3AuthError::InvalidCredentials)?,
                     ),
                     parts[3].starts_with('!'),
@@ -90,7 +90,7 @@ mod authorization {
                 debug!("not match bucket");
                 return false;
             }
-            return if let Some(ref path_matcher) = self.path_matcher {
+            if let Some(ref path_matcher) = self.path_matcher {
                 if let Some(path) = path {
                     debug!("attempt to path matching");
                     let matches = path_matcher.matches(&PathBuf::from(path));
@@ -103,7 +103,7 @@ mod authorization {
                 }
             } else {
                 true
-            };
+            }
         }
     }
 
@@ -244,7 +244,7 @@ impl S3Auth for RwLock<ACLAuth> {
         access_id: &str,
     ) -> Result<String, S3AuthError> {
         let readed = self.read().await;
-        if let Some(token) = readed.indexdb.query_token(&access_id) {
+        if let Some(token) = readed.indexdb.query_token(access_id) {
             context.access_id = Some(readed.indexdb.hash_string_unsafe(access_id));
             return Ok(token.get_sec_str());
         }
@@ -256,7 +256,7 @@ impl S3Auth for RwLock<ACLAuth> {
         if let S3Path::Object { bucket, key } = ctx.path {
             if readed
                 .indexdb
-                .query_is_match_indexed_public(bucket, &Path::new(key))
+                .query_is_match_indexed_public(bucket, Path::new(key))
             {
                 return Ok(());
             }
@@ -301,7 +301,7 @@ impl S3Auth for RwLock<ACLAuth> {
                         let mut write_guard = self.write().await;
                         return write_guard
                             .indexdb
-                            .create_bucket_from(&bucket, &token.origin)
+                            .create_bucket_from(bucket, &token.origin)
                             .map_err(|_| S3AuthError::InvalidBucket);
                     }
                     let is_valid_origin = {

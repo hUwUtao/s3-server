@@ -32,7 +32,7 @@ impl<'a> OrderedHeaders<'a> {
         let mut headers: SmallVec<[(&'a str, &'a str); 16]> =
             SmallVec::with_capacity(req.headers().len());
 
-        for (name, value) in req.headers().iter() {
+        for (name, value) in req.headers() {
             headers.push((name.as_str(), value.to_str()?));
         }
         headers.sort_unstable();
@@ -43,7 +43,7 @@ impl<'a> OrderedHeaders<'a> {
     /// + Signed headers must be sorted
     pub fn map_signed_headers(&self, signed_headers: &[impl AsRef<str>]) -> Self {
         let mut headers: SmallVec<[(&'a str, &'a str); 16]> = SmallVec::new();
-        for &(name, value) in self.headers.iter() {
+        for &(name, value) in &self.headers {
             if signed_headers
                 .binary_search_by(|probe| probe.as_ref().cmp(name))
                 .is_ok()

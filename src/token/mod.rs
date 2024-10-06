@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::jwt::Claims;
-pub(crate) mod database;
+pub(in crate) mod database;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Token {
@@ -23,14 +23,14 @@ pub struct Token {
     pub roles: Vec<String>,
 }
 
-impl Into<Claims> for &Token {
-    fn into(self) -> Claims {
-        Claims {
-            sub: self.sub.to_string(),
-            exp: self.exp.unwrap_or(u64::MAX) as usize,
-            aud: vec!["s3".to_string()],
-            sec: self.jti.to_string(),
-            roles: self.roles.clone(),
+impl From<&Token> for Claims {
+    fn from(val: &Token) -> Self {
+        Self {
+            sub: val.sub.to_string(),
+            exp: val.exp.unwrap_or(u64::MAX) as usize,
+            aud: vec!["s3".to_owned()],
+            sec: val.jti.to_string(),
+            roles: val.roles.clone(),
         }
     }
 }

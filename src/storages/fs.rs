@@ -60,7 +60,7 @@ impl FileSystem {
         let dir = Path::new(&bucket);
         let file_path = Path::new(&key);
         let ans = dir
-            .join(&file_path)
+            .join(file_path)
             .absolutize_virtually(&self.root)?
             .into();
         Ok(ans)
@@ -153,8 +153,7 @@ where
         let amt_u64 = futures::io::copy_buf(bytes.as_ref(), writer).await?;
         let amt: usize = amt_u64.try_into().unwrap_or_else(|err| {
             panic!(
-                "number overflow: u64 to usize, n = {}, err = {}",
-                amt_u64, err
+                "number overflow: u64 to usize, n = {amt_u64}, err = {err}"
             )
         });
 
@@ -169,7 +168,7 @@ where
 
         nwrite = nwrite
             .checked_add(amt)
-            .unwrap_or_else(|| panic!("nwrite overflow: amt = {}, nwrite = {}", amt, nwrite));
+            .unwrap_or_else(|| panic!("nwrite overflow: amt = {amt}, nwrite = {nwrite}"));
     }
     writer.flush().await?;
     Ok(nwrite)
@@ -249,7 +248,7 @@ impl S3Storage for FileSystem {
 
         let output = CopyObjectOutput {
             copy_object_result: CopyObjectResult {
-                e_tag: Some(format!("\"{}\"", md5_sum)),
+                e_tag: Some(format!("\"{md5_sum}\"")),
                 last_modified: Some(last_modified),
             }
             .apply(Some),
@@ -422,7 +421,7 @@ impl S3Storage for FileSystem {
             content_length: Some(trace_try!(content_length.try_into())),
             last_modified: Some(last_modified),
             metadata: object_metadata,
-            e_tag: Some(format!("\"{}\"", md5_sum)),
+            e_tag: Some(format!("\"{md5_sum}\"")),
             ..GetObjectOutput::default() // TODO: handle other fields
         };
 
@@ -486,7 +485,7 @@ impl S3Storage for FileSystem {
             if file_type.is_dir() {
                 let file_name = entry.file_name();
                 let name = file_name.to_string_lossy();
-                if S3Path::check_bucket_name(&*name) {
+                if S3Path::check_bucket_name(&name) {
                     let file_meta = trace_try!(entry.metadata().await);
                     let creation_date = trace_try!(file_meta.created());
                     buckets.push(Bucket {
@@ -528,12 +527,12 @@ impl S3Storage for FileSystem {
 
             let (start_path, filter_prefix) = if prefix_parts.last() == Some(&"") {
                 (
-                    &bucket_path.join(&normalized_prefix.parent().unwrap_or(Path::new(""))),
+                    &bucket_path.join(normalized_prefix.parent().unwrap_or(Path::new(""))),
                     None,
                 )
             } else if prefix_parts.len() > 1 {
                 (
-                    &bucket_path.join(&normalized_prefix.parent().unwrap_or(Path::new(""))),
+                    &bucket_path.join(normalized_prefix.parent().unwrap_or(Path::new(""))),
                     Some(
                         normalized_prefix
                             .file_name()
@@ -557,7 +556,7 @@ impl S3Storage for FileSystem {
                     let file_type = trace_try!(entry.file_type().await);
                     let file_path = entry.path();
                     let key = trace_try!(file_path.strip_prefix(&bucket_path));
-                    let key_str = key.to_string_lossy().to_string().replace("\\", "/");
+                    let key_str = key.to_string_lossy().to_string().replace('\\', "/");
 
                     if let Some(ref prefix) = filter_prefix {
                         if !key_str.starts_with(prefix) {
@@ -570,7 +569,7 @@ impl S3Storage for FileSystem {
                         if let Some(common_prefix) =
                             key_str.get(..(prefix_len + end + delimiter.len()))
                         {
-                            let common_prefix = common_prefix.to_string();
+                            let common_prefix = common_prefix.to_owned();
                             if !common_prefixes.contains(&common_prefix) {
                                 common_prefixes.push(common_prefix);
                             }
@@ -606,7 +605,7 @@ impl S3Storage for FileSystem {
                     let file_type = trace_try!(entry.file_type().await);
                     let file_path = entry.path();
                     let key = trace_try!(file_path.strip_prefix(&bucket_path));
-                    let key_str = key.to_string_lossy().to_string().replace("\\", "/");
+                    let key_str = key.to_string_lossy().to_string().replace('\\', "/");
 
                     if file_type.is_dir() {
                         dir_queue.push_back(file_path.clone());
@@ -676,7 +675,7 @@ impl S3Storage for FileSystem {
                 let file_type = trace_try!(entry.file_type().await);
                 let file_path = entry.path();
                 let key = trace_try!(file_path.strip_prefix(&path));
-                let key_str = key.to_string_lossy().to_string().replace("\\", "/");
+                let key_str = key.to_string_lossy().to_string().replace('\\', "/");
 
                 if let Some(ref prefix) = input.prefix {
                     if !key_str.starts_with(prefix) {
@@ -824,7 +823,7 @@ impl S3Storage for FileSystem {
         }
 
         let output = PutObjectOutput {
-            e_tag: Some(format!("\"{}\"", md5_sum)),
+            e_tag: Some(format!("\"{md5_sum}\"")),
             ..PutObjectOutput::default()
         }; // TODO: handle other fields
 
@@ -864,7 +863,7 @@ impl S3Storage for FileSystem {
             code_error!(IncompleteBody, "You did not provide the number of bytes specified by the Content-Length HTTP header.")
         })?;
 
-        let file_path_str = format!(".upload_id-{}.part-{}", upload_id, part_number);
+        let file_path_str = format!(".upload_id-{upload_id}.part-{part_number}");
         let file_path = trace_try!(Path::new(&file_path_str).absolutize_virtually(&self.root));
 
         let mut md5_hash = Md5::new();
@@ -885,7 +884,7 @@ impl S3Storage for FileSystem {
             "UploadPart: write file",
         );
 
-        let e_tag = format!("\"{}\"", md5_sum);
+        let e_tag = format!("\"{md5_sum}\"");
 
         let output = UploadPartOutput {
             e_tag: Some(e_tag),
@@ -931,7 +930,7 @@ impl S3Storage for FileSystem {
                     "InvalidPartOrder"
                 )));
             }
-            let part_path_str = format!(".upload_id-{}.part-{}", upload_id, part_number);
+            let part_path_str = format!(".upload_id-{upload_id}.part-{part_number}");
             let part_path = trace_try!(Path::new(&part_path_str).absolutize_virtually(&self.root));
 
             let mut reader = trace_try!(File::open(&part_path).await);
@@ -966,7 +965,7 @@ impl S3Storage for FileSystem {
             "CompleteMultipartUpload: calculate md5 sum",
         );
 
-        let e_tag = format!("\"{}\"", md5_sum);
+        let e_tag = format!("\"{md5_sum}\"");
         let output = CompleteMultipartUploadOutput {
             bucket: Some(bucket),
             key: Some(key),

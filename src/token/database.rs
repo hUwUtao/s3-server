@@ -59,7 +59,7 @@ impl IndexDB {
     }
 
     pub fn is_locked(&self, bucket_name: &str) -> bool {
-        self.locked_bucket.contains(&bucket_name.to_string())
+        self.locked_bucket.contains(&bucket_name.to_owned())
     }
 
     pub fn validate_orign(&self, this: &str, token: &Token) -> bool {
@@ -82,7 +82,7 @@ impl IndexDB {
 
         let new_config = BucketConfigFile {
             public: Vec::new(),
-            allows: vec![origin_bucket.to_string()],
+            allows: vec![origin_bucket.to_owned()],
             owners: source_config.owners.clone(),
             tokens: HashMap::new(),
         };
@@ -151,7 +151,7 @@ impl IndexDB {
             .and_then(|(bucket, key)| {
                 self.indexed_config
                     .get(bucket)
-                    .and_then(|c| c.tokens.get(key).map(|t| t.to_owned()))
+                    .and_then(|c| c.tokens.get(key).map(ToOwned::to_owned))
             })
     }
 
@@ -169,17 +169,17 @@ impl IndexDB {
             warn!("Deadlock on reload \"{}\"", bucket_name);
             if self.indexed_config.get(bucket_name).is_some() {
                 self.unlock_bucket(bucket_name);
-                ()
+                ();
             }
         }
-        self.lock_bucket(bucket_name.to_string());
+        self.lock_bucket(bucket_name.to_owned());
         let result = self.reload_bucket(bucket_name);
         self.unlock_bucket(bucket_name);
         result
     }
 
     pub fn new(fs_root: PathBuf) -> std::io::Result<Self> {
-        let mut db = IndexDB {
+        let mut db = Self {
             fs_root,
             indexed_config: HashMap::new(),
             indexed_token: HashMap::new(),
@@ -240,7 +240,7 @@ impl IndexDB {
             let new_config = self.load_config(bucket_name)?;
             let _ = self
                 .indexed_config
-                .insert(bucket_name.to_string(), new_config.clone());
+                .insert(bucket_name.to_owned(), new_config.clone());
             self.index_tokens(bucket_name, &new_config);
             self.index_public(bucket_name, &new_config);
         }
@@ -269,7 +269,7 @@ impl IndexDB {
                 Some(s) if s.ends_with(".rule.json") => s,
                 _ => continue,
             };
-            let bucket_name = file_str.trim_end_matches(".rule.json").to_string();
+            let bucket_name = file_str.trim_end_matches(".rule.json").to_owned();
             if self.is_locked(&bucket_name) {
                 continue;
             }
@@ -297,7 +297,7 @@ impl IndexDB {
     fn get_config_file_path(&self, bucket_name: &str) -> PathBuf {
         self.fs_root
             .join("sys")
-            .join(format!("{}.rule.json", bucket_name))
+            .join(format!("{bucket_name}.rule.json"))
     }
 
     fn load_config(&self, bucket_name: &str) -> std::io::Result<BucketConfigFile> {
@@ -313,7 +313,7 @@ impl IndexDB {
             let token_index = self.hash_string_unsafe(key);
             let _ = self
                 .indexed_token
-                .insert(token_index, (bucket_name.to_string(), key.to_string()));
+                .insert(token_index, (bucket_name.to_owned(), key.to_string()));
 
             let permissions = self.parse_roles(&token.roles);
             let _ = self
@@ -331,7 +331,7 @@ impl IndexDB {
         if !matchers.is_empty() {
             let _ = self
                 .indexed_public
-                .insert(bucket_name.to_string(), Arc::new(matchers));
+                .insert(bucket_name.to_owned(), Arc::new(matchers));
         }
     }
 }

@@ -98,7 +98,7 @@ mod xml {
     #[derive(Debug, Deserialize)]
     /// `CreateBucketConfiguration`
     pub struct CreateBucketConfiguration {
-        /// LocationConstraint
+        /// `LocationConstraint`
         #[serde(rename = "LocationConstraint")]
         pub location_constraint: Option<String>,
     }

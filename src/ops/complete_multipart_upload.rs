@@ -122,10 +122,10 @@ mod xml {
     /// `CompletedPart`
     #[derive(Debug, Deserialize)]
     pub struct CompletedPart {
-        /// ETag
+        /// `ETag`
         #[serde(rename = "ETag")]
         e_tag: Option<String>,
-        /// PartNumber
+        /// `PartNumber`
         #[serde(rename = "PartNumber")]
         part_number: Option<i64>,
     }

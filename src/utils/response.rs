@@ -80,8 +80,8 @@ impl ResponseExt for Response {
                 standalone: None,
             })?;
 
-            f(&mut w)?;
-        }
+            f(&mut w)?
+        };
 
         *self.body_mut() = Body::from(body);
         self.set_mime(&mime::TEXT_XML)?;

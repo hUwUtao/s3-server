@@ -85,7 +85,7 @@ pub enum S3Operation {
 
 impl ToString for &S3Operation {
     fn to_string(&self) -> String {
-        format!("{:?}", self)
+        format!("{self:?}")
     }
 }
 

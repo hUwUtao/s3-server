@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use s3_server::token::{BucketConfigFile, Token};
-use serde_json;
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -171,8 +170,8 @@ fn generate_jti(fs_root: PathBuf, bucket: String, token_key: String) -> Result<(
 
 fn create_bucket(fs_root: PathBuf, bucket: String, owner_id: u64, ci: bool) -> Result<()> {
     fs::create_dir_all(&fs_root)?;
-    fs::create_dir_all(&fs_root.join("sys"))?;
-    fs::create_dir_all(&fs_root.join(&bucket))?;
+    fs::create_dir_all(fs_root.join("sys"))?;
+    fs::create_dir_all(fs_root.join(&bucket))?;
     let file_path = get_config_file_path(&fs_root, &bucket);
 
     if file_path.exists() {

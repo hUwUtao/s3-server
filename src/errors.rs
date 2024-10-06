@@ -11,7 +11,7 @@ use tracing::debug;
 use tracing_error::SpanTrace;
 
 /// Type representing an error response
-pub(crate) struct XmlErrorResponse {
+pub(in crate) struct XmlErrorResponse {
     /// code
     pub(crate) code: S3ErrorCode,
     /// message
@@ -338,7 +338,7 @@ pub enum S3ErrorCode {
     /// The provided token has expired.
     ExpiredToken,
 
-    /// Indicates that you are attempting to access a bucket from a different region than where the bucket exists. To avoid this error, use the <code class=\"code\">--region</code> option. For example: <code class=\"code\">aws s3 cp awsexample.txt s3://testbucket/ --region ap-east-1</code>.
+    /// Indicates that you are attempting to access a bucket from a different region than where the bucket exists. To avoid this error, use the <code class=\"code\">--region</code> option. For example: <code class=\"code\">aws s3 cp awsexample.txt <s3://testbucket>/ --region ap-east-1</code>.
     IllegalLocationConstraintException,
 
     /// Indicates that the versioning configuration specified in the request is invalid.
@@ -597,7 +597,7 @@ macro_rules! roundtrip_variant_and_str
         /// Returns a corresponding error code from a string
         /// # Errors
         /// Returns an `Err` if parsing failed
-        pub fn parse_from_str<'a>(s: &'a str) -> Result<Self, ParseS3ErrorCodeError<'a>> {
+        pub fn parse_from_str(s: &str) -> Result<Self, ParseS3ErrorCodeError<'_>> {
             Ok(match s {
                 $(
                    stringify!($v) =>  Self::$v,

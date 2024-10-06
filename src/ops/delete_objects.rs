@@ -130,7 +130,7 @@ mod xml {
         /// Key name of the object to delete.
         #[serde(rename = "Key")]
         pub key: String,
-        /// VersionId for the specific version of the object to delete.
+        /// `VersionId` for the specific version of the object to delete.
         #[serde(rename = "VersionId")]
         pub version_id: Option<String>,
     }

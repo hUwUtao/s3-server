@@ -125,7 +125,7 @@
 #[macro_use]
 mod internal_macros;
 
-pub(crate) mod utils;
+pub(in crate) mod utils;
 
 mod data_structures;
 mod ops;
@@ -150,14 +150,14 @@ pub mod path;
 pub mod storages;
 
 /// Request type
-pub(crate) type Request = hyper::Request<Body>;
+pub(in crate) type Request = hyper::Request<Body>;
 
 /// Response type
-pub(crate) type Response = hyper::Response<Body>;
+pub(in crate) type Response = hyper::Response<Body>;
 
 /// `Box<dyn std::error::Error + Send + Sync + 'static>`
-pub(crate) type BoxStdError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub(in crate) type BoxStdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-pub(crate) use async_trait::async_trait;
-pub(crate) use hyper::{Body, Method, StatusCode};
-pub(crate) use mime::Mime;
+pub(in crate) use async_trait::async_trait;
+pub(in crate) use hyper::{Body, Method, StatusCode};
+pub(in crate) use mime::Mime;
