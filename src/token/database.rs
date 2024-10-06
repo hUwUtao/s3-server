@@ -1,11 +1,10 @@
-use base64;
 use serde_json;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::auth::{Matcher, Permission};
 
@@ -68,47 +67,72 @@ impl IndexDB {
         false
     }
 
-    pub fn print_indexed_roles(&self) {
-        println!("Indexed Config:");
-        for (bucket, config) in &self.indexed_config {
-            println!("Bucket: {}", bucket);
-            println!("  Public: {:?}", config.public);
-            println!("  Allows: {:?}", config.allows);
-            println!("  Owners: {:?}", config.owners);
-            println!("  Tokens: {}", config.tokens.len());
-        }
+    pub fn create_bucket_from(
+        &mut self,
+        new_bucket: &str,
+        origin_bucket: &str,
+    ) -> std::io::Result<()> {
+        let source_config = self.indexed_config.get(origin_bucket).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Source bucket not found")
+        })?;
 
-        println!("\nIndexed Tokens:");
-        for (token_hash, (bucket, key)) in &self.indexed_token {
-            println!("Token Hash: {}", token_hash);
-            println!("  Bucket: {}", bucket);
-            println!("  Key: {}", key);
-        }
+        let new_config = BucketConfigFile {
+            public: Vec::new(),
+            allows: vec![origin_bucket.to_string()],
+            owners: source_config.owners.clone(),
+            tokens: HashMap::new(),
+        };
 
-        println!("\nIndexed Roles:");
-        for (token_hash, permissions) in &self.indexed_roles {
-            println!("Token Hash: {}", token_hash);
-            for permission in permissions.iter() {
-                println!("  - {:?}", permission);
-            }
-        }
+        let config_path = self.get_config_file_path(new_bucket);
+        let config_json = serde_json::to_string_pretty(&new_config)?;
+        std::fs::write(config_path, config_json)?;
 
-        println!("\nIndexed Public:");
-        for (bucket, matchers) in &self.indexed_public {
-            println!("Bucket: {}", bucket);
-            for matcher in matchers.iter() {
-                println!("  - {:?}", matcher);
-            }
-        }
+        self.reload_bucket(new_bucket)?;
 
-        println!("\nLocked Buckets:");
-        for bucket in &self.locked_bucket {
-            println!("  - {}", bucket);
-        }
+        Ok(())
     }
 
+    // pub fn print_indexed_roles(&self) {
+    //     println!("Indexed Config:");
+    //     for (bucket, config) in &self.indexed_config {
+    //         println!("Bucket: {}", bucket);
+    //         println!("  Public: {:?}", config.public);
+    //         println!("  Allows: {:?}", config.allows);
+    //         println!("  Owners: {:?}", config.owners);
+    //         println!("  Tokens: {}", config.tokens.len());
+    //     }
+
+    //     println!("\nIndexed Tokens:");
+    //     for (token_hash, (bucket, key)) in &self.indexed_token {
+    //         println!("Token Hash: {}", token_hash);
+    //         println!("  Bucket: {}", bucket);
+    //         println!("  Key: {}", key);
+    //     }
+
+    //     println!("\nIndexed Roles:");
+    //     for (token_hash, permissions) in &self.indexed_roles {
+    //         println!("Token Hash: {}", token_hash);
+    //         for permission in permissions.iter() {
+    //             println!("  - {:?}", permission);
+    //         }
+    //     }
+
+    //     println!("\nIndexed Public:");
+    //     for (bucket, matchers) in &self.indexed_public {
+    //         println!("Bucket: {}", bucket);
+    //         for matcher in matchers.iter() {
+    //             println!("  - {:?}", matcher);
+    //         }
+    //     }
+
+    //     println!("\nLocked Buckets:");
+    //     for bucket in &self.locked_bucket {
+    //         println!("  - {}", bucket);
+    //     }
+    // }
+
     pub fn get_roles_as_permission(&self, token: &u64) -> Option<Arc<Vec<Permission>>> {
-        self.print_indexed_roles();
+        // self.print_indexed_roles();
         self.indexed_roles.get(token).cloned()
     }
 

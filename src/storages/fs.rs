@@ -183,6 +183,12 @@ const fn operation_error<E>(e: E) -> S3StorageError<E> {
 #[async_trait]
 impl S3Storage for FileSystem {
     #[tracing::instrument]
+    async fn is_bucket_exist(&self, bucket: &str) -> S3StorageResult<bool, HeadBucketError> {
+        let path = trace_try!(self.get_bucket_path(bucket));
+        Ok(path.exists())
+    }
+
+    #[tracing::instrument]
     async fn create_bucket(
         &self,
         input: CreateBucketRequest,

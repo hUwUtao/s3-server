@@ -28,7 +28,7 @@ use futures::future;
 use hyper::server::Server;
 use hyper::service::make_service_fn;
 use structopt::StructOpt;
-use tracing::{debug, info};
+use tracing::info;
 #[derive(StructOpt)]
 #[structopt(name = "s3-server")]
 struct Args {
@@ -58,7 +58,7 @@ pub fn setup_tracing() {
     use tracing_subscriber::fmt::time::UtcTime;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::EnvFilter;
 
     #[cfg(feature = "tokio_unstable")]
     {

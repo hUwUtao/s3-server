@@ -207,6 +207,8 @@ pub enum S3AuthError {
     InsufficientScope,
     /// Invalid credentials
     InvalidCredentials,
+    /// Invalid bucket
+    InvalidBucket,
     /// Token verification failed
     TokenVerificationFailed,
     /// Missing required token
@@ -263,6 +265,10 @@ impl S3AuthError {
             Self::InvalidCredentials => S3Error::new(
                 S3ErrorCode::InvalidAccessKeyId,
                 "The provided credentials are invalid.",
+            ),
+            Self::InvalidBucket => S3Error::new(
+                S3ErrorCode::InvalidBucketName,
+                "The specified bucket does not exist.",
             ),
             Self::TokenVerificationFailed => {
                 S3Error::new(S3ErrorCode::InvalidToken, "Token verification failed.")

@@ -10,6 +10,7 @@ description = "An experimental generic S3 server"
 keywords = ["s3"]
 categories = ["web-programming", "web-programming::http-server"]
 rust-version = "1.59"
+default-run = "s3-server"
 
 [features]
 default = ["binary"]

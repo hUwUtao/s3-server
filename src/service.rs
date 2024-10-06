@@ -4,7 +4,7 @@ use crate::auth::ACLAuth;
 use crate::auth::S3Auth;
 use crate::data_structures::{OrderedHeaders, OrderedQs};
 use crate::dto::S3AuthContext;
-use crate::errors::{S3AuthError, S3ErrorCode, S3Result};
+use crate::errors::{S3ErrorCode, S3Result};
 use crate::headers::{AmzContentSha256, AmzDate, AuthorizationV4, CredentialV4};
 use crate::headers::{AUTHORIZATION, CONTENT_TYPE, X_AMZ_CONTENT_SHA256, X_AMZ_DATE};
 use crate::ops::{ReqContext, S3Handler};
@@ -31,6 +31,7 @@ use futures::future::BoxFuture;
 use futures::stream::{Stream, StreamExt};
 use hyper::body::Bytes;
 
+use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 /// S3 service
@@ -102,16 +103,8 @@ impl S3Service {
         Ok(Self {
             handlers: crate::ops::setup_handlers(),
             storage: Box::new(storage),
-            auth: Some(Box::new(auth)),
+            auth: Some(Box::new(RwLock::new(auth))),
         })
-    }
-
-    /// Set the authentication provider
-    pub fn set_auth<A>(&mut self, auth: A)
-    where
-        A: S3Auth + Send + Sync + 'static,
-    {
-        self.auth = Some(Box::new(auth));
     }
 
     /// Converts `S3Service` to `SharedS3Service`
@@ -190,27 +183,24 @@ impl S3Service {
             ));
         }
 
-        if let Some(auth) = self.auth.as_deref() {
+        if let Some(auth) = self.auth.as_ref() {
             if ctx.path.is_object() && auth.authorize_public_query(&ctx).await.is_ok() {
                 return self.handlers[0].handle(&mut ctx, &*self.storage).await;
             }
-        }
-
-        check_signature(&mut ctx, self.auth.as_deref()).await?;
-
-        for handler in &self.handlers {
-            if handler.is_match(&ctx) {
-                if let Some(auth) = self.auth.as_deref() {
-                    auth.authorize_query(&ctx, handler)
+            check_signature(&mut ctx, auth.as_ref()).await?;
+            for handler in &self.handlers {
+                if handler.is_match(&ctx) {
+                    auth.authorize_query(&ctx, handler, &self.storage)
                         .await
                         .map_err(|i| i.into_generic_error())?;
                     debug!("Authorized");
+                    return handler.handle(&mut ctx, &*self.storage).await;
                 }
-                return handler.handle(&mut ctx, &*self.storage).await;
             }
-        }
 
-        Err(not_supported!("The operation is not supported yet."))
+            return Err(not_supported!("The operation is not supported yet."));
+        }
+        Err(not_supported!("Did not present any authentication service"))
     }
 }
 
@@ -298,7 +288,7 @@ fn take_io_body(body: &mut Body) -> impl Stream<Item = io::Result<Bytes>> + Send
 /// check signature (v4)
 async fn check_signature(
     ctx: &mut ReqContext<'_>,
-    auth: Option<&(dyn S3Auth + Send + Sync)>,
+    auth: &(dyn S3Auth + Send + Sync),
 ) -> S3Result<()> {
     // --- POST auth ---
     if ctx.req.method() == Method::POST {
@@ -334,7 +324,7 @@ async fn fetch_secret_key(
 /// check post signature (v4)
 async fn check_post_signature(
     ctx: &mut ReqContext<'_>,
-    auth: Option<&(dyn S3Auth + Send + Sync)>,
+    auth_provider: &(dyn S3Auth + Send + Sync),
 ) -> S3Result<()> {
     /// util method
     fn find_info(multipart: &Multipart) -> Option<(&str, &str, &str, &str, &str)> {
@@ -351,15 +341,6 @@ async fn check_post_signature(
             x_amz_signature,
         ))
     }
-
-    let auth_provider = match auth {
-        Some(a) => a,
-        None => {
-            return Err(not_supported!(
-                "The service has no authentication provider."
-            ))
-        }
-    };
 
     let mime = ctx.mime.as_ref().unwrap_or_else(|| panic!("missing mime"));
 
@@ -428,7 +409,7 @@ async fn check_post_signature(
 /// check presigned url (v4)
 async fn check_presigned_url(
     ctx: &mut ReqContext<'_>,
-    auth: Option<&(dyn S3Auth + Send + Sync)>,
+    auth_provider: &(dyn S3Auth + Send + Sync),
 ) -> S3Result<()> {
     let qs = ctx
         .query_strings
@@ -440,15 +421,6 @@ async fn check_presigned_url(
 
     // TODO: how to use it?
     let _content_sha256: Option<AmzContentSha256<'_>> = extract_amz_content_sha256(&ctx.headers)?;
-
-    let auth_provider = match auth {
-        Some(a) => a,
-        None => {
-            return Err(not_supported!(
-                "The service has no authentication provider."
-            ))
-        }
-    };
 
     let secret_key = fetch_secret_key(
         ctx.auth,
@@ -487,22 +459,16 @@ async fn check_presigned_url(
 /// check header auth (v4)
 async fn check_header_auth(
     ctx: &mut ReqContext<'_>,
-    auth: Option<&(dyn S3Auth + Send + Sync)>,
+    auth_provider: &(dyn S3Auth + Send + Sync),
 ) -> S3Result<()> {
     let authorization: AuthorizationV4<'_> = {
         if let Some(mut a) = extract_authorization_v4(&ctx.headers)? {
             a.signed_headers.sort_unstable();
             a
         } else {
-            if auth.is_some() {
-                return Err(code_error!(AccessDenied, "Access Denied"));
-            }
             return Ok(());
         }
     };
-
-    let auth_provider =
-        auth.ok_or_else(|| not_supported!("The service has no authentication provider."))?;
 
     let amz_content_sha256 = extract_amz_content_sha256(&ctx.headers)?
         .ok_or_else(|| invalid_request!("Missing header: x-amz-content-sha256"))?;

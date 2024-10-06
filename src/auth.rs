@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::errors::S3AuthError;
-use crate::ops::ReqContext;
+use crate::ops::{ReqContext, S3Operation};
 use crate::path::S3Path;
 use crate::token::database::IndexDB;
+use crate::S3Storage;
 use crate::{dto::S3AuthContext, ops::S3Handler};
 
 mod authorization {
@@ -14,6 +15,7 @@ mod authorization {
     use std::path::{Path, PathBuf};
 
     use crate::errors::S3AuthError;
+    use crate::ops::S3Operation;
 
     use path_matchers::{glob, PathMatcher, PatternError};
     use regex::Regex;
@@ -76,7 +78,7 @@ mod authorization {
             })
         }
 
-        pub fn matches(&self, operation: &str, bucket: &str, path: Option<&str>) -> bool {
+        pub fn matches(&self, operation: &S3Operation, bucket: &str, path: Option<&str>) -> bool {
             if !self.operations.contains(&operation.to_string()) {
                 debug!("not match ops");
                 return false;
@@ -154,7 +156,7 @@ mod authorization {
 pub use authorization::{Matcher, Permission};
 
 use async_trait::async_trait;
-use tracing::debug;
+use tokio::sync::RwLock;
 
 /// S3 Authentication Provider
 
@@ -171,6 +173,7 @@ pub trait S3Auth {
         &self,
         _ctx: &'_ ReqContext<'_>,
         _handler: &Box<dyn S3Handler + Send + Sync>,
+        _storage: &Box<dyn S3Storage + Send + Sync>,
     ) -> Result<(), S3AuthError> {
         Err(S3AuthError::AuthServiceUnavailable)
     }
@@ -218,6 +221,7 @@ pub trait S3Auth {
 //     }
 // }
 
+#[derive(Debug)]
 pub struct ACLAuth {
     indexdb: IndexDB,
 }
@@ -231,22 +235,24 @@ impl ACLAuth {
 }
 
 #[async_trait]
-impl S3Auth for ACLAuth {
+impl S3Auth for RwLock<ACLAuth> {
     async fn get_secret_access_key(
         &self,
         context: &mut S3AuthContext<'_>,
         access_id: &str,
     ) -> Result<String, S3AuthError> {
-        if let Some(token) = self.indexdb.query_token(&access_id) {
-            context.access_id = Some(self.indexdb.hash_string_unsafe(access_id));
+        let readed = self.read().await;
+        if let Some(token) = readed.indexdb.query_token(&access_id) {
+            context.access_id = Some(readed.indexdb.hash_string_unsafe(access_id));
             return Ok(token.get_sec_str());
         }
         Err(S3AuthError::NotSignedUp)
     }
 
     async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
+        let readed = self.read().await;
         if let S3Path::Object { bucket, key } = ctx.path {
-            if self
+            if readed
                 .indexdb
                 .query_is_match_indexed_public(bucket, &Path::new(key))
             {
@@ -255,33 +261,55 @@ impl S3Auth for ACLAuth {
         }
         Err(S3AuthError::Unauthorized)
     }
-
+    // too much lock to be leased
     async fn authorize_query(
         &self,
         ctx: &'_ ReqContext<'_>,
         handler: &Box<dyn S3Handler + Send + Sync>,
+        storage: &Box<dyn S3Storage + Send + Sync>,
     ) -> Result<(), S3AuthError> {
-        let operation = format!("{:?}", handler.kind());
+        let operation = handler.kind();
         if let Some(access_id) = ctx.auth.access_id {
-            if let Some(perms) = self.indexdb.get_roles_as_permission(&access_id) {
-                let (bucket, path) = match ctx.path {
-                    S3Path::Root => ("*", None),
-                    S3Path::Bucket { bucket } => (bucket, None),
-                    S3Path::Object { bucket, key } => (bucket, Some(key)),
-                };
+            let (bucket, path) = match ctx.path {
+                S3Path::Root => ("*", None),
+                S3Path::Bucket { bucket } => (bucket, None),
+                S3Path::Object { bucket, key } => (bucket, Some(key)),
+            };
 
-                if perms.len() == 0 {
-                    return Err(S3AuthError::InsufficientScope);
-                }
+            let (perms, token) = {
+                let read_guard = self.read().await;
+                (
+                    read_guard.indexdb.get_roles_as_permission(&access_id),
+                    read_guard.indexdb.query_token_prehashed(access_id),
+                )
+            };
 
+            if let (Some(perms), Some(token)) = (perms, token) {
                 if perms.iter().any(|i| i.matches(&operation, bucket, path)) {
-                    // Implement origin check
-                    if let Some(token) = self.indexdb.query_token_prehashed(access_id) {
-                        if (token.origin == bucket) ^ self.indexdb.validate_orign(bucket, &token) {
-                            return Ok(());
-                        } else {
-                            return Err(S3AuthError::InvalidOrigin);
-                        }
+                    if operation == S3Operation::BucketCreate
+                        && !storage
+                            .is_bucket_exist(bucket)
+                            .await
+                            .map_err(|_| S3AuthError::InvalidBucket)?
+                        && storage
+                            .is_bucket_exist(&token.origin)
+                            .await
+                            .map_err(|_| S3AuthError::InvalidBucket)?
+                    {
+                        let mut write_guard = self.write().await;
+                        return write_guard
+                            .indexdb
+                            .create_bucket_from(&bucket, &token.origin)
+                            .map_err(|_| S3AuthError::InvalidBucket);
+                    }
+                    let is_valid_origin = {
+                        let read_guard = self.read().await;
+                        (token.origin == bucket) ^ read_guard.indexdb.validate_orign(bucket, &token)
+                    };
+                    if is_valid_origin {
+                        return Ok(());
+                    } else {
+                        return Err(S3AuthError::InvalidOrigin);
                     }
                 }
             }

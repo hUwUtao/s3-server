@@ -24,6 +24,9 @@ use async_trait::async_trait;
 /// See <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operations_Amazon_Simple_Storage_Service.html>
 #[async_trait]
 pub trait S3Storage {
+    /// Not a valid operation
+    async fn is_bucket_exist(&self, bucket: &str) -> S3StorageResult<bool, HeadBucketError>;
+
     /// See [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)
     async fn complete_multipart_upload(
         &self,

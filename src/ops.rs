@@ -83,6 +83,12 @@ pub enum S3Operation {
     BucketDelete,
 }
 
+impl ToString for &S3Operation {
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
 /// S3 operation handler
 #[async_trait]
 pub trait S3Handler {
