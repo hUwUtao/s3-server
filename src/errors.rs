@@ -11,7 +11,7 @@ use tracing::debug;
 use tracing_error::SpanTrace;
 
 /// Type representing an error response
-pub(in crate) struct XmlErrorResponse {
+pub(crate) struct XmlErrorResponse {
     /// code
     pub(crate) code: S3ErrorCode,
     /// message
