@@ -23,7 +23,7 @@ use crate::path::S3Path;
 use crate::storage::S3Storage;
 use crate::utils::{crypto, time, Apply};
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryInto;
 use std::env;
 use std::io::{self, SeekFrom};
@@ -59,10 +59,7 @@ impl FileSystem {
     fn get_object_path(&self, bucket: &str, key: &str) -> io::Result<PathBuf> {
         let dir = Path::new(&bucket);
         let file_path = Path::new(&key);
-        let ans = dir
-            .join(file_path)
-            .absolutize_virtually(&self.root)?
-            .into();
+        let ans = dir.join(file_path).absolutize_virtually(&self.root)?.into();
         Ok(ans)
     }
 
@@ -138,6 +135,164 @@ impl FileSystem {
         }
         md5_hash.finalize().apply(crypto::to_hex_string).apply(Ok)
     }
+    fn parse_prefix_and_delimiter(
+        &self,
+        prefix: &Option<String>,
+        delimiter: &Option<String>,
+    ) -> (PathBuf, String) {
+        // Unwrap the prefix option, defaulting to an empty string if None
+        let prefix = prefix.as_deref().unwrap_or("");
+        println!("Input prefix: {:?}", prefix);
+
+        // Unwrap the delimiter option, defaulting to "/" if None
+        let delimiter = delimiter.as_deref().unwrap_or("/");
+        println!("Input delimiter: {:?}", delimiter);
+
+        if prefix.ends_with(delimiter) {
+            // If the prefix ends with the delimiter, return the full prefix as the path
+            // and an empty string as the prefix filter
+            println!("Prefix ends with delimiter. Returning full prefix as path.");
+            (PathBuf::from(prefix), String::new())
+        } else {
+            // Split the prefix into components using the delimiter
+            let mut components: Vec<&str> = prefix.split(delimiter).collect();
+            println!("Split components: {:?}", components);
+
+            // Pop the last component to use as the prefix filter, defaulting to an empty string
+            let prefix_filter = components.pop().unwrap_or("").to_string();
+            println!("Prefix filter: {:?}", prefix_filter);
+
+            // Join the remaining components to form the path
+            let path = PathBuf::from(components.join(delimiter));
+            println!("Resulting path: {:?}", path);
+
+            (path, prefix_filter)
+        }
+    }
+
+    async fn list_contents(
+        &self,
+        has_prefix: bool,
+        bucket_path: &Path,
+        search_path: &Path,
+        prefix_filter: &str,
+        delimiter: &Option<String>,
+        max_keys: i64,
+    ) -> io::Result<(Vec<Object>, HashSet<String>)> {
+        let mut objects = Vec::new();
+        let mut common_prefixes = HashSet::new();
+
+        if has_prefix {
+            let mut entries = async_fs::read_dir(search_path).await?;
+
+            while let Some(entry) = entries.next().await {
+                if objects.len() as i64 >= max_keys {
+                    break;
+                }
+
+                let entry = entry?;
+                let file_type = entry.file_type().await?;
+                let file_path = entry.path();
+                let key = file_path
+                    .strip_prefix(bucket_path)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+
+                let file_name = file_path.file_name().unwrap().to_str().unwrap();
+                if !file_name.starts_with(&prefix_filter) {
+                    continue;
+                }
+
+                if file_type.is_dir() {
+                    if let Some(delimiter) = delimiter {
+                        let common_prefix = format!("{}{}", key, delimiter);
+                        let _ = common_prefixes.insert(common_prefix);
+                    }
+                } else {
+                    self.add_object(&mut objects, &file_path, &key).await?;
+                }
+            }
+        } else {
+            self.list_contents_recursively(
+                &mut objects,
+                bucket_path,
+                search_path,
+                prefix_filter,
+                max_keys,
+            )
+            .await?;
+        }
+
+        Ok((objects, common_prefixes))
+    }
+
+    async fn list_contents_recursively(
+        &self,
+        objects: &mut Vec<Object>,
+        bucket_path: &Path,
+        current_path: &Path,
+        prefix_filter: &str,
+        max_keys: i64,
+    ) -> io::Result<()> {
+        let mut entries = async_fs::read_dir(current_path).await?;
+
+        while let Some(entry) = entries.next().await {
+            if objects.len() as i64 >= max_keys {
+                break;
+            }
+
+            let entry = entry?;
+            let file_type = entry.file_type().await?;
+            let file_path = entry.path();
+            let key = file_path
+                .strip_prefix(bucket_path)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if !key.starts_with(prefix_filter) {
+                continue;
+            }
+
+            if file_type.is_dir() {
+                Box::pin(self.list_contents_recursively(
+                    objects,
+                    bucket_path,
+                    &file_path,
+                    prefix_filter,
+                    max_keys,
+                ))
+                .await?;
+            } else {
+                self.add_object(objects, &file_path, &key).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn add_object(
+        &self,
+        objects: &mut Vec<Object>,
+        file_path: &Path,
+        key: &str,
+    ) -> io::Result<()> {
+        let metadata = async_fs::metadata(file_path).await?;
+        let last_modified = time::to_rfc3339(metadata.modified()?);
+        let size = metadata.len();
+
+        objects.push(Object {
+            key: Some(key.to_string()),
+            last_modified: Some(last_modified),
+            e_tag: None, // You might want to calculate this if needed
+            size: Some(size as i64),
+            storage_class: Some("STANDARD".to_string()),
+            owner: None,
+        });
+
+        Ok(())
+    }
 }
 
 /// copy bytes from a stream to a writer
@@ -152,9 +307,7 @@ where
 
         let amt_u64 = futures::io::copy_buf(bytes.as_ref(), writer).await?;
         let amt: usize = amt_u64.try_into().unwrap_or_else(|err| {
-            panic!(
-                "number overflow: u64 to usize, n = {amt_u64}, err = {err}"
-            )
+            panic!("number overflow: u64 to usize, n = {amt_u64}, err = {err}")
         });
 
         assert_eq!(
@@ -502,158 +655,78 @@ impl S3Storage for FileSystem {
         };
         Ok(output)
     }
+
     #[tracing::instrument]
     async fn list_objects(
         &self,
         input: ListObjectsRequest,
     ) -> S3StorageResult<ListObjectsOutput, ListObjectsError> {
         let bucket_path = trace_try!(self.get_bucket_path(&input.bucket));
+        debug!("Bucket path: {:?}", bucket_path);
 
-        let mut objects = Vec::new();
-        let mut common_prefixes = Vec::new();
-        let mut dir_queue = VecDeque::new();
+        let (search_dir, prefix_filter) =
+            self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter);
+        let search_path = bucket_path.join(&search_dir);
+        debug!("Search path: {:?}", search_path);
 
-        if let Some(ref delimiter) = input.delimiter {
-            let normalized_prefix = Path::new(input.prefix.as_deref().unwrap_or(""))
-                .components()
-                .filter(|c| *c != Component::ParentDir && *c != Component::CurDir)
-                .collect::<PathBuf>();
-
-            let prefix_parts: Vec<_> = normalized_prefix
-                .to_str()
-                .unwrap_or("")
-                .split(delimiter)
-                .collect();
-
-            let (start_path, filter_prefix) = if prefix_parts.last() == Some(&"") {
-                (
-                    &bucket_path.join(normalized_prefix.parent().unwrap_or(Path::new(""))),
-                    None,
-                )
-            } else if prefix_parts.len() > 1 {
-                (
-                    &bucket_path.join(normalized_prefix.parent().unwrap_or(Path::new(""))),
-                    Some(
-                        normalized_prefix
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned(),
-                    ),
-                )
-            } else {
-                (
-                    &bucket_path,
-                    Some(normalized_prefix.to_string_lossy().into_owned()),
-                )
-            };
-            dir_queue.push_back(start_path.clone());
-
-            while let Some(dir) = dir_queue.pop_front() {
-                let mut entries = trace_try!(async_fs::read_dir(dir).await);
-                while let Some(entry) = entries.next().await {
-                    let entry = trace_try!(entry);
-                    let file_type = trace_try!(entry.file_type().await);
-                    let file_path = entry.path();
-                    let key = trace_try!(file_path.strip_prefix(&bucket_path));
-                    let key_str = key.to_string_lossy().to_string().replace('\\', "/");
-
-                    if let Some(ref prefix) = filter_prefix {
-                        if !key_str.starts_with(prefix) {
-                            continue;
-                        }
-                    }
-
-                    let prefix_len = input.prefix.as_deref().unwrap_or("").len();
-                    if let Some(end) = key_str.get(prefix_len..).and_then(|s| s.find(delimiter)) {
-                        if let Some(common_prefix) =
-                            key_str.get(..(prefix_len + end + delimiter.len()))
-                        {
-                            let common_prefix = common_prefix.to_owned();
-                            if !common_prefixes.contains(&common_prefix) {
-                                common_prefixes.push(common_prefix);
-                            }
-                        }
-                        continue;
-                    }
-
-                    if file_type.is_dir() {
-                        dir_queue.push_back(file_path.clone());
-                    } else {
-                        let metadata = trace_try!(entry.metadata().await);
-                        let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
-                        let size = metadata.len();
-
-                        objects.push(Object {
-                            e_tag: None,
-                            key: Some(key_str),
-                            last_modified: Some(last_modified),
-                            owner: None,
-                            size: Some(trace_try!(size.try_into())),
-                            storage_class: None,
-                        });
-                    }
-                }
-            }
-        } else {
-            dir_queue.push_back(bucket_path.clone());
-
-            while let Some(dir) = dir_queue.pop_front() {
-                let mut entries = trace_try!(async_fs::read_dir(dir).await);
-                while let Some(entry) = entries.next().await {
-                    let entry = trace_try!(entry);
-                    let file_type = trace_try!(entry.file_type().await);
-                    let file_path = entry.path();
-                    let key = trace_try!(file_path.strip_prefix(&bucket_path));
-                    let key_str = key.to_string_lossy().to_string().replace('\\', "/");
-
-                    if file_type.is_dir() {
-                        dir_queue.push_back(file_path.clone());
-                    } else {
-                        let metadata = trace_try!(entry.metadata().await);
-                        let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
-                        let size = metadata.len();
-
-                        objects.push(Object {
-                            e_tag: None,
-                            key: Some(key_str),
-                            last_modified: Some(last_modified),
-                            owner: None,
-                            size: Some(trace_try!(size.try_into())),
-                            storage_class: None,
-                        });
-                    }
-                }
-            }
+        if !search_path.is_dir() {
+            return Ok(ListObjectsOutput {
+                name: Some(input.bucket),
+                prefix: input.prefix,
+                delimiter: input.delimiter,
+                encoding_type: input.encoding_type,
+                ..Default::default()
+            });
         }
 
-        objects.sort_by(|lhs, rhs| {
-            let lhs_key = lhs.key.as_deref().unwrap_or("");
-            let rhs_key = rhs.key.as_deref().unwrap_or("");
-            lhs_key.cmp(rhs_key)
-        });
+        let (mut objects, common_prefixes) = trace_try!(
+            self.list_contents(
+                input.prefix.is_some(),
+                &bucket_path,
+                &search_path,
+                &prefix_filter,
+                &input.delimiter,
+                input.max_keys.unwrap_or(1000i64),
+            )
+            .await
+        );
 
-        let output = ListObjectsOutput {
+        objects.sort_by(|a, b| a.key.cmp(&b.key));
+        let mut common_prefixes: Vec<_> = common_prefixes.into_iter().collect();
+        common_prefixes.sort();
+
+        // URL encode object keys and common prefixes if encoding type is specified
+        if input.encoding_type.as_deref() == Some("url") {
+            for object in objects.iter_mut() {
+                if let Some(key) = object.key.as_mut() {
+                    *key = urlencoding::encode(key).into_owned();
+                }
+            }
+            common_prefixes = common_prefixes
+                .into_iter()
+                .map(|p| urlencoding::encode(&p).into_owned())
+                .collect();
+        }
+
+        Ok(ListObjectsOutput {
             contents: Some(objects),
-            delimiter: input.delimiter,
-            encoding_type: input.encoding_type,
+            common_prefixes: if input.delimiter.is_some() {
+                Some(
+                    common_prefixes
+                        .into_iter()
+                        .map(|p| CommonPrefix { prefix: Some(p) })
+                        .collect(),
+                )
+            } else {
+                None
+            },
             name: Some(input.bucket),
-            common_prefixes: Some(
-                common_prefixes
-                    .into_iter()
-                    .map(|prefix| CommonPrefix {
-                        prefix: Some(prefix),
-                    })
-                    .collect(),
-            ),
-            is_truncated: None,
-            marker: None,
-            max_keys: None,
-            next_marker: None,
             prefix: input.prefix,
-        };
-
-        Ok(output)
+            delimiter: input.delimiter,
+            max_keys: input.max_keys.map(|x| x as i32),
+            encoding_type: input.encoding_type,
+            ..Default::default()
+        })
     }
 
     #[tracing::instrument]
@@ -661,94 +734,79 @@ impl S3Storage for FileSystem {
         &self,
         input: ListObjectsV2Request,
     ) -> S3StorageResult<ListObjectsV2Output, ListObjectsV2Error> {
-        let path = trace_try!(self.get_bucket_path(&input.bucket));
+        let bucket_path = trace_try!(self.get_bucket_path(&input.bucket));
+        debug!("Bucket path: {:?}", bucket_path);
 
-        let mut objects = Vec::new();
-        let mut common_prefixes = Vec::new();
-        let mut dir_queue = VecDeque::new();
-        dir_queue.push_back(path.clone());
+        let (search_dir, prefix_filter) =
+            self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter);
+        let search_path = bucket_path.join(&search_dir);
+        debug!("Search path: {:?}", search_path);
 
-        while let Some(dir) = dir_queue.pop_front() {
-            let mut entries = trace_try!(async_fs::read_dir(dir).await);
-            while let Some(entry) = entries.next().await {
-                let entry = trace_try!(entry);
-                let file_type = trace_try!(entry.file_type().await);
-                let file_path = entry.path();
-                let key = trace_try!(file_path.strip_prefix(&path));
-                let key_str = key.to_string_lossy().to_string().replace('\\', "/");
-
-                if let Some(ref prefix) = input.prefix {
-                    if !key_str.starts_with(prefix) {
-                        continue;
-                    }
-                }
-
-                if let Some(ref delimiter) = input.delimiter {
-                    if let Some(end) =
-                        key_str[input.prefix.as_deref().unwrap_or("").len()..].find(delimiter)
-                    {
-                        let common_prefix =
-                            key_str[..(input.prefix.as_deref().unwrap_or("").len()
-                                + end
-                                + delimiter.len())]
-                                .to_string();
-                        if !common_prefixes.contains(&common_prefix) {
-                            common_prefixes.push(common_prefix);
-                        }
-                        continue;
-                    }
-                }
-
-                if file_type.is_dir() {
-                    dir_queue.push_back(file_path);
-                } else {
-                    let metadata = trace_try!(entry.metadata().await);
-                    let last_modified = time::to_rfc3339(trace_try!(metadata.modified()));
-                    let size = metadata.len();
-
-                    objects.push(Object {
-                        e_tag: None,
-                        key: Some(key_str),
-                        last_modified: Some(last_modified),
-                        owner: None,
-                        size: Some(trace_try!(size.try_into())),
-                        storage_class: None,
-                    });
-                }
-            }
+        if !search_path.is_dir() {
+            return Ok(ListObjectsV2Output {
+                name: Some(input.bucket),
+                prefix: input.prefix,
+                delimiter: input.delimiter,
+                key_count: Some(0),
+                encoding_type: input.encoding_type.clone(),
+                ..Default::default()
+            });
         }
 
-        objects.sort_by(|lhs, rhs| {
-            let lhs_key = lhs.key.as_deref().unwrap_or("");
-            let rhs_key = rhs.key.as_deref().unwrap_or("");
-            lhs_key.cmp(rhs_key)
-        });
-        let output = ListObjectsV2Output {
-            key_count: Some(trace_try!(
-                (objects.len() + common_prefixes.len()).try_into()
-            )),
-            contents: Some(objects),
-            delimiter: input.delimiter,
-            encoding_type: input.encoding_type,
-            name: Some(input.bucket),
-            // common_prefixes: Some(
-            //     common_prefixes
-            //         .into_iter()
-            //         .map(|prefix| CommonPrefix {
-            //             prefix: Some(prefix),
-            //         })
-            //         .collect(),
-            // ),
-            common_prefixes: None,
-            is_truncated: None,
-            max_keys: None,
-            prefix: input.prefix,
-            continuation_token: None,
-            next_continuation_token: None,
-            start_after: input.start_after,
-        };
+        let (mut objects, common_prefixes) = trace_try!(
+            self.list_contents(
+                input.prefix.is_some(),
+                &bucket_path,
+                &search_path,
+                &prefix_filter,
+                &input.delimiter,
+                input.max_keys.unwrap_or(1000i64),
+            )
+            .await
+        );
 
-        Ok(output)
+        objects.sort_by(|a, b| a.key.cmp(&b.key));
+        let mut common_prefixes: Vec<_> = common_prefixes.into_iter().collect();
+        common_prefixes.sort();
+
+        let object_count = objects.len();
+        let common_prefix_count = common_prefixes.len();
+
+        // URL encode object keys if encoding type is specified
+        if input.encoding_type.as_deref() == Some("url") {
+            for object in objects.iter_mut() {
+                if let Some(key) = object.key.as_mut() {
+                    *key = urlencoding::encode(key).into_owned();
+                }
+            }
+            common_prefixes = common_prefixes
+                .into_iter()
+                .map(|p| urlencoding::encode(&p).into_owned())
+                .collect();
+        }
+
+        Ok(ListObjectsV2Output {
+            contents: Some(objects),
+            common_prefixes: if input.delimiter.is_some() {
+                Some(
+                    common_prefixes
+                        .iter()
+                        .map(|p| CommonPrefix {
+                            prefix: Some(p.clone()),
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            },
+            name: Some(input.bucket),
+            prefix: input.prefix,
+            delimiter: input.delimiter,
+            max_keys: input.max_keys,
+            key_count: Some((object_count + common_prefix_count) as i64),
+            encoding_type: input.encoding_type,
+            ..Default::default()
+        })
     }
 
     #[tracing::instrument]
