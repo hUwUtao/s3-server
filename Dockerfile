@@ -5,7 +5,7 @@ FROM rust:bookworm as builder
 WORKDIR /usr/src/s3-server
 
 # Copy the Cargo.toml and Cargo.lock files
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock assets ./
 
 # Copy the source code
 COPY src ./src
