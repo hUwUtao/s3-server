@@ -35,6 +35,15 @@ cargo install --features binary --path .
 s3-server --help
 ```
 
+## Features
+
+- [x] Most operations are functional
+- [x] ACL for each token
+- [x] ACL inheritance (for active directory like)
+- [x] ACL based bucket listing
+- [ ] Static web hosting
+- [ ] Hostname bucket scheme???
+
 ## Usage
 
 ~~You must generate `target/pub.pem` which also require a private key to sign token. Yet, token are infered, which is really costy~~
