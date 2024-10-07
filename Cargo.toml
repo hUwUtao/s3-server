@@ -9,7 +9,7 @@ readme = "README.md"
 description = "An experimental generic S3 server"
 keywords = ["s3"]
 categories = ["web-programming", "web-programming::http-server"]
-rust-version = "1.83"
+rust-version = "1.81"
 default-run = "s3-server"
 
 [features]
@@ -28,21 +28,21 @@ required-features = ["binary"]
 [dependencies]
 
 anyhow = { version = "1.0.57", optional = true }
-async-fs = "1.5.0"
+async-fs = "2.1.2"
 async-trait = "0.1.53"
 backtrace = "0.3.65"
 base64 = "0.22.1"
 base64-simd = "0.8.0"
 chrono = "0.4.19"
-console-subscriber = { version = "0.1.8", optional = true }
-const-str = { version = "0.3.1", features = ["verify-regex"] }
+console-subscriber = { version = "0.4.0", optional = true }
+const-str = { version = "0.5", features = ["regex"] }
 dotenv = { version = "0.15.0", optional = true }
 futures = "0.3.21"
 hex-simd = "0.8.0"
 hmac = "0.12.1"
-http = "0.2.7"
+http = "1.1.0"
 httparse = "1.7.0"
-hyper = { version = "0.14.18", features = ["server"] }
+hyper = { version = "=0.14", features = ["server"] }
 md-5 = "0.10.1"
 memchr = "2.4.1"
 mime = "0.3.16"
