@@ -67,9 +67,24 @@ impl S3Output for ListObjectsOutput {
         wrap_internal_error(|res| {
             res.set_xml_body(4096, |w| {
                 w.stack("ListBucketResult", |w| {
-                    w.opt_element("IsTruncated", self.is_truncated.map(|b| b.to_string()))?;
+                    // w.opt_element("IsTruncated", self.is_truncated.map(|b| b.to_string()))?;
+
+                    w.opt_element("Name", self.name)?;
+                    w.opt_element("Prefix", self.prefix)?;
+                    w.opt_element("Delimiter", self.delimiter)?;
+
+                    w.opt_element("MaxKeys", self.max_keys.map(|k| k.to_string()))?;
+
+                    w.opt_element("EncodingType", self.encoding_type)?;
+
                     w.opt_element("Marker", self.marker)?;
                     w.opt_element("NextMarker", self.next_marker)?;
+
+                    w.opt_element(
+                        "IsTruncated",
+                        Some(self.is_truncated.unwrap_or(false).to_string()),
+                    )?;
+
                     if let Some(contents) = self.contents {
                         for content in contents {
                             w.stack("Contents", |w| {
@@ -86,17 +101,14 @@ impl S3Output for ListObjectsOutput {
                             })?;
                         }
                     }
-                    w.opt_element("Name", self.name)?;
-                    w.opt_element("Prefix", self.prefix)?;
-                    w.opt_element("Delimiter", self.delimiter)?;
-                    w.opt_element("MaxKeys", self.max_keys.map(|k| k.to_string()))?;
-                    w.opt_stack("CommonPrefixes", self.common_prefixes, |w, prefixes| {
+                    if let Some(prefixes) = self.common_prefixes {
                         for prefix in prefixes {
-                            w.opt_element("Prefix", prefix.prefix)?;
+                            w.stack("CommonPrefixes", |w| {
+                                w.opt_element("Prefix", prefix.prefix)?;
+                                Ok(())
+                            })?;
                         }
-                        Ok(())
-                    })?;
-                    w.opt_element("EncodingType", self.encoding_type)?;
+                    }
                     Ok(())
                 })
             })
