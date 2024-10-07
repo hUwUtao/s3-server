@@ -1,9 +1,11 @@
 //! [`ListBuckets`](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListBuckets.html)
 
+use std::ops::Deref;
+
 use super::{wrap_internal_error, ReqContext, S3Handler};
 
 use crate::dto::{ListBucketsError, ListBucketsOutput, ListBucketsRequest};
-use crate::errors::{S3Error, S3Result};
+use crate::errors::{S3Error, S3Result, S3StorageError};
 use crate::output::S3Output;
 use crate::storage::S3Storage;
 use crate::utils::{ResponseExt, XmlWriterExt};
@@ -27,8 +29,32 @@ impl S3Handler for Handler {
         storage: &(dyn S3Storage + Send + Sync),
     ) -> S3Result<Response> {
         let input = extract(ctx)?;
-        let output = storage.list_buckets(input).await;
-        output.try_into_response()
+        if let Some(auth_engine) = ctx.auth_engine {
+            if let Ok(matchers) = auth_engine
+                .as_ref()
+                .get_listops_matchers(ctx.auth.deref())
+                .await
+            {
+                let output = storage
+                    .list_buckets(input)
+                    .await
+                    .map(|f| ListBucketsOutput {
+                        buckets: f.buckets.map(|b| {
+                            b.iter()
+                                .filter(|bn| {
+                                    matchers.iter().any(|m| {
+                                        m.match_listops(bn.name.as_ref().unwrap_or(&String::new()))
+                                    })
+                                })
+                                .map(|f| f.clone())
+                                .collect::<Vec<_>>()
+                        }),
+                        ..f
+                    });
+                return output.try_into_response();
+            }
+        }
+        ListBucketsOutput::default().try_into_response()
     }
 }
 

@@ -190,6 +190,8 @@ impl S3Service {
         let query_strings = extract_qs(&req)?;
         let mime = extract_mime(&headers)?;
 
+        let refed = self.auth.as_ref();
+
         let mut ctx: ReqContext<'_> = ReqContext {
             req: &req,
             headers,
@@ -199,6 +201,7 @@ impl S3Service {
             mime,
             multipart: None,
             auth: &mut context,
+            auth_engine: self.auth.as_ref(),
         };
 
         debug!("authenticated");

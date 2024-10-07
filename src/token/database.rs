@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json;
 use std::{
     collections::HashMap,
+    fmt::Debug,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -29,21 +30,17 @@ pub struct IndexDB {
     locked_bucket: Vec<String>,
 }
 
-impl IndexDB {
-    fn parse_roles(&self, roles: &[String]) -> Vec<Permission> {
-        roles
-            .iter()
-            .filter_map(|role| {
-                Permission::new(role)
-                    .map_err(|e| {
-                        warn!("permparse failed: {}", e);
-                        e
-                    })
-                    .ok()
-            })
-            .collect()
-    }
+pub trait PassiveIndexDB: Debug {
+    fn parse_roles(&self, roles: &[String]) -> Vec<Permission>;
+    fn validate_orign(&self, this: &str, token: &Token) -> bool;
+    fn create_bucket_from(&mut self, new_bucket: &str, origin_bucket: &str) -> std::io::Result<()>;
+    fn get_roles_as_permission(&self, token: &u64) -> Option<Arc<Vec<Permission>>>;
+    fn query_token(&self, token: &str) -> Option<Token>;
+    fn query_token_prehashed(&self, token_hash: u64) -> Option<Token>;
+    fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> (bool, bool);
+}
 
+impl IndexDB {
     fn lock_bucket(&mut self, bucket_name: String) {
         if !self.locked_bucket.contains(&bucket_name) {
             self.locked_bucket.push(bucket_name);
@@ -60,109 +57,6 @@ impl IndexDB {
 
     pub fn is_locked(&self, bucket_name: &str) -> bool {
         self.locked_bucket.contains(&bucket_name.to_owned())
-    }
-
-    pub fn validate_orign(&self, this: &str, token: &Token) -> bool {
-        if let Some(cfg) = self.indexed_config.get(this) {
-            if cfg.allows.contains(&token.origin) {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn create_bucket_from(
-        &mut self,
-        new_bucket: &str,
-        origin_bucket: &str,
-    ) -> std::io::Result<()> {
-        let source_config = self.indexed_config.get(origin_bucket).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "Source bucket not found")
-        })?;
-
-        let new_config = BucketConfigFile {
-            public: Vec::new(),
-            indexable: None,
-            allows: vec![origin_bucket.to_owned()],
-            owners: source_config.owners.clone(),
-            tokens: HashMap::new(),
-        };
-
-        let config_path = self.get_config_file_path(new_bucket);
-        let config_json = serde_json::to_string_pretty(&new_config)?;
-        std::fs::write(config_path, config_json)?;
-
-        self.reload_bucket(new_bucket)?;
-
-        Ok(())
-    }
-
-    // pub fn print_indexed_roles(&self) {
-    //     println!("Indexed Config:");
-    //     for (bucket, config) in &self.indexed_config {
-    //         println!("Bucket: {}", bucket);
-    //         println!("  Public: {:?}", config.public);
-    //         println!("  Allows: {:?}", config.allows);
-    //         println!("  Owners: {:?}", config.owners);
-    //         println!("  Tokens: {}", config.tokens.len());
-    //     }
-
-    //     println!("\nIndexed Tokens:");
-    //     for (token_hash, (bucket, key)) in &self.indexed_token {
-    //         println!("Token Hash: {}", token_hash);
-    //         println!("  Bucket: {}", bucket);
-    //         println!("  Key: {}", key);
-    //     }
-
-    //     println!("\nIndexed Roles:");
-    //     for (token_hash, permissions) in &self.indexed_roles {
-    //         println!("Token Hash: {}", token_hash);
-    //         for permission in permissions.iter() {
-    //             println!("  - {:?}", permission);
-    //         }
-    //     }
-
-    //     println!("\nIndexed Public:");
-    //     for (bucket, matchers) in &self.indexed_public {
-    //         println!("Bucket: {}", bucket);
-    //         for matcher in matchers.iter() {
-    //             println!("  - {:?}", matcher);
-    //         }
-    //     }
-
-    //     println!("\nLocked Buckets:");
-    //     for bucket in &self.locked_bucket {
-    //         println!("  - {}", bucket);
-    //     }
-    // }
-
-    pub fn get_roles_as_permission(&self, token: &u64) -> Option<Arc<Vec<Permission>>> {
-        // self.print_indexed_roles();
-        self.indexed_roles.get(token).cloned()
-    }
-
-    pub fn query_token(&self, token: &str) -> Option<Token> {
-        let token_hash = self.hash_string_unsafe(token);
-        self.query_token_prehashed(token_hash)
-    }
-
-    pub fn query_token_prehashed(&self, token_hash: u64) -> Option<Token> {
-        self.indexed_token
-            .get(&token_hash)
-            .and_then(|(bucket, key)| {
-                self.indexed_config
-                    .get(bucket)
-                    .and_then(|c| c.tokens.get(key).map(ToOwned::to_owned))
-            })
-    }
-
-    pub fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> (bool, bool) {
-        if let Some(matchs) = self.indexed_public.get(bucket) {
-            if matchs.1.iter().any(|m| m.matches(path)) {
-                return (true, matchs.0);
-            }
-        }
-        (false, false)
     }
 
     pub fn initiate_reload(&mut self, bucket_name: &str) -> std::io::Result<()> {
@@ -336,6 +230,81 @@ impl IndexDB {
                 Arc::new((config.indexable.unwrap_or(false), matchers)),
             );
         }
+    }
+}
+
+impl PassiveIndexDB for IndexDB {
+    fn parse_roles(&self, roles: &[String]) -> Vec<Permission> {
+        roles
+            .iter()
+            .filter_map(|role| {
+                Permission::new(role)
+                    .map_err(|e| {
+                        warn!("permparse failed: {}", e);
+                        e
+                    })
+                    .ok()
+            })
+            .collect()
+    }
+
+    fn validate_orign(&self, this: &str, token: &Token) -> bool {
+        if let Some(cfg) = self.indexed_config.get(this) {
+            if cfg.allows.contains(&token.origin) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn create_bucket_from(&mut self, new_bucket: &str, origin_bucket: &str) -> std::io::Result<()> {
+        let source_config = self.indexed_config.get(origin_bucket).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Source bucket not found")
+        })?;
+
+        let new_config = BucketConfigFile {
+            public: Vec::new(),
+            indexable: None,
+            allows: vec![origin_bucket.to_owned()],
+            owners: source_config.owners.clone(),
+            tokens: HashMap::new(),
+        };
+
+        let config_path = self.get_config_file_path(new_bucket);
+        let config_json = serde_json::to_string_pretty(&new_config)?;
+        std::fs::write(config_path, config_json)?;
+
+        self.reload_bucket(new_bucket)?;
+
+        Ok(())
+    }
+
+    fn get_roles_as_permission(&self, token: &u64) -> Option<Arc<Vec<Permission>>> {
+        self.indexed_roles.get(token).cloned()
+    }
+
+    fn query_token(&self, token: &str) -> Option<Token> {
+        let token_hash = self.hash_string_unsafe(token);
+        self.query_token_prehashed(token_hash)
+    }
+
+    fn query_token_prehashed(&self, token_hash: u64) -> Option<Token> {
+        self.indexed_token
+            .get(&token_hash)
+            .and_then(|(bucket, key)| {
+                self.indexed_config
+                    .get(bucket)
+                    .and_then(|c| c.tokens.get(key).map(ToOwned::to_owned))
+            })
+    }
+
+    fn query_is_match_indexed_public(&self, bucket: &str, path: &Path) -> (bool, bool) {
+        if let Some(matchs) = self.indexed_public.get(bucket) {
+            if matchs.1.iter().any(|m| m.matches(path)) {
+                return (true, matchs.0);
+            }
+        }
+        (false, false)
     }
 }
 

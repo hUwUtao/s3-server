@@ -25,7 +25,7 @@ use crate::errors::S3Result;
 use crate::path::S3Path;
 use crate::storage::S3Storage;
 use crate::streams::multipart::Multipart;
-use crate::{async_trait, Body, BoxStdError, Mime, Request, Response};
+use crate::{async_trait, Body, BoxStdError, Mime, Request, Response, S3Auth};
 
 use std::fmt::Debug;
 use std::mem;
@@ -124,6 +124,8 @@ pub struct ReqContext<'a> {
     pub multipart: Option<Multipart>,
     /// auth
     pub auth: &'a mut S3AuthContext<'a>,
+    /// auth engine
+    pub auth_engine: Option<&'a Box<dyn S3Auth + Send + Sync>>,
 }
 
 impl<'a> ReqContext<'a> {

@@ -1,12 +1,14 @@
 //! S3 Authentication
 
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::errors::S3AuthError;
 use crate::ops::{ReqContext, S3Operation};
 use crate::path::S3Path;
-use crate::token::database::IndexDB;
+use crate::token::database::{IndexDB, PassiveIndexDB};
 use crate::utils::metrics::Mesurable;
 use crate::S3Storage;
 use crate::{dto::S3AuthContext, ops::S3Handler};
@@ -80,30 +82,30 @@ mod authorization {
             })
         }
 
+        pub fn match_listops(&self, bucket: &str) -> bool {
+            self.operations.contains(&"BucketList".to_string())
+                && self.bucket_matcher.is_match(bucket)
+        }
+
         pub fn matches(&self, operation: &S3Operation, bucket: &str, path: Option<&str>) -> bool {
             if !self.operations.contains(&operation.to_string()) {
                 debug!("not match ops");
                 return false;
             }
 
-            if !self.bucket_matcher.is_match(bucket) {
+            if bucket != "*" && !self.bucket_matcher.is_match(bucket) {
                 debug!("not match bucket");
                 return false;
             }
+
             if let Some(ref path_matcher) = self.path_matcher {
                 if let Some(path) = path {
                     debug!("attempt to path matching");
                     let matches = path_matcher.matches(&PathBuf::from(path));
-                    matches ^ self.path_matcher_inverted
-                } else {
-                    // TODO
-                    // if there is no path but requested in a path required endpoint, it should not be possible
-                    // there is no such case yet this is exploitable
-                    true
+                    return matches ^ self.path_matcher_inverted;
                 }
-            } else {
-                true
-            }
+            };
+            true
         }
     }
 
@@ -164,13 +166,20 @@ use tracing::debug;
 /// S3 Authentication Provider
 
 #[async_trait]
-pub trait S3Auth: Mesurable {
+pub trait S3Auth: Mesurable + Debug {
     /// lookup `secret_access_key` by `access_key_id`
     async fn get_secret_access_key(
         &self,
         context: &mut S3AuthContext<'_>,
         access_key_id: &str,
     ) -> Result<String, S3AuthError>;
+
+    async fn get_listops_matchers(
+        &self,
+        _context: &S3AuthContext<'_>,
+    ) -> Result<Arc<Vec<Permission>>, S3AuthError> {
+        Err(S3AuthError::AuthServiceUnavailable)
+    }
 
     async fn authorize_query(
         &self,
@@ -252,6 +261,21 @@ impl S3Auth for RwLock<ACLAuth> {
         Err(S3AuthError::NotSignedUp)
     }
 
+    async fn get_listops_matchers(
+        &self,
+        context: &S3AuthContext<'_>,
+    ) -> Result<Arc<Vec<Permission>>, S3AuthError> {
+        if let Some(access_id) = context.access_id {
+            self.read()
+                .await
+                .indexdb
+                .get_roles_as_permission(&access_id)
+                .ok_or(S3AuthError::MissingToken)
+        } else {
+            Err(S3AuthError::MissingToken)
+        }
+    }
+
     async fn authorize_public_query(&self, ctx: &'_ ReqContext<'_>) -> Result<(), S3AuthError> {
         let readed = self.read().await;
         if let S3Path::Object { bucket, key } = ctx.path {
@@ -318,7 +342,9 @@ impl S3Auth for RwLock<ACLAuth> {
                     }
                     let is_valid_origin = {
                         let read_guard = self.read().await;
-                        (token.origin == bucket) ^ read_guard.indexdb.validate_orign(bucket, &token)
+                        (bucket == "*")
+                            || (token.origin == bucket)
+                                ^ read_guard.indexdb.validate_orign(bucket, &token)
                     };
                     if is_valid_origin {
                         return Ok(());

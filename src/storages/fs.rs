@@ -21,16 +21,19 @@ use crate::errors::{S3StorageError, S3StorageResult};
 use crate::headers::{AmzCopySource, Range};
 use crate::path::S3Path;
 use crate::storage::S3Storage;
+use crate::token::database::PassiveIndexDB;
 use crate::utils::{crypto, time, Apply};
 
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::env;
+use std::fmt::Debug;
 use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufWriter};
 use futures::stream::{Stream, StreamExt, TryStreamExt};
+use hex_simd::AsOut;
 use hyper::body::Bytes;
 use md5::{Digest, Md5};
 use path_absolutize::Absolutize;
