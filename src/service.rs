@@ -37,7 +37,7 @@ use hyper::body::Bytes;
 
 use hyper::header::HeaderValue;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use tracing::debug;
 
 /// S3 service
 pub struct S3Service {
@@ -96,6 +96,17 @@ impl hyper::service::Service<Request> for SharedS3Service {
     }
 }
 
+use once_cell::sync::Lazy;
+
+static BANNER: Lazy<String> = Lazy::new(|| {
+    format!(
+        "{}@{}<{}>",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_PKG_REPOSITORY")
+    )
+});
+
 impl S3Service {
     /// Constructs a S3 service
     pub fn new(
@@ -136,38 +147,22 @@ impl S3Service {
         #[cfg(debug_assertions)]
         debug!("req = \n{:#?}", req);
 
-        if req.uri().path() == "/favicon.ico" {
-            let favicon = include_bytes!("../assets/favicon.ico");
-            let mut res = Response::new(Body::from(favicon.to_vec()));
-            let _ = res
-                .headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static("image/x-icon"));
-            return Ok(res);
-        }
-
-        if req.uri().path() == "/metrics" {
-            // Handle metrics endpoint
-            let metrics = self.metrics().await;
-            let mut sorted_metrics: Vec<_> = metrics.into_iter().collect();
-            sorted_metrics.sort_by(|a, b| a.0.cmp(&b.0));
-            let metrics_str = sorted_metrics
-                .iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Ok(Response::new(Body::from(metrics_str)));
-        }
-
         let ret = match self.handle(req).await {
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                let mut resp = resp;
+                let _ = resp
+                    .headers_mut()
+                    .insert("X-Powered-By", HeaderValue::from_str(&BANNER)?);
+                Ok(resp)
+            }
             Err(err) => err.into_xml_response().try_into_response(),
         };
 
-        #[cfg(debug_assertions)]
-        match ret {
-            Ok(ref resp) => debug!("resp = \n{:#?}", resp),
-            Err(ref err) => error!(%err),
-        };
+        // #[cfg(debug_assertions)]
+        // match ret {
+        //     Ok(ref resp) => debug!("resp = \n{:#?}", resp),
+        //     Err(ref err) => error!(%err),
+        // };
 
         Ok(ret?)
     }
@@ -176,6 +171,32 @@ impl S3Service {
     /// # Errors
     /// Returns an `Err` if any component failed
     pub async fn handle(&self, mut req: Request) -> S3Result<Response> {
+        match req.uri().path() {
+            "/favicon.ico" => {
+                let favicon = include_bytes!("../assets/favicon.ico");
+                let mut res = Response::new(Body::from(favicon.to_vec()));
+                let _ = res
+                    .headers_mut()
+                    .insert(CONTENT_TYPE, HeaderValue::from_static("image/x-icon"));
+                return Ok(res);
+            }
+            "/metrics" => {
+                // Handle metrics endpoint
+                let metrics = self.metrics().await;
+                let mut sorted_metrics: Vec<_> = metrics.into_iter().collect();
+                sorted_metrics.sort_by(|a, b| a.0.cmp(&b.0));
+                let metrics_str = sorted_metrics
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Ok(Response::new(Body::from(metrics_str)));
+            }
+            _ => {}
+        }
+
+        // Handle S3 Request
+
         let mut context = S3AuthContext {
             method: &req.method().clone(),
             uri: &req.uri().clone(),
@@ -189,8 +210,6 @@ impl S3Service {
         let headers = extract_headers(&req)?;
         let query_strings = extract_qs(&req)?;
         let mime = extract_mime(&headers)?;
-
-        let refed = self.auth.as_ref();
 
         let mut ctx: ReqContext<'_> = ReqContext {
             req: &req,

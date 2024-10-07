@@ -77,7 +77,7 @@ impl ResponseExt for Response {
             w.write(XmlEvent::StartDocument {
                 version: XmlVersion::Version10,
                 encoding: Some("UTF-8"),
-                standalone: Some(true),
+                standalone: None,
             })?;
 
             f(&mut w)?

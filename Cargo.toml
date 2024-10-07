@@ -1,15 +1,15 @@
 [package]
 name = "s3-server"
 version = "0.2.0"
-authors = ["Nugine <nugine@foxmail.com>"]
+authors = ["stdpi <oss@stdpi.work>", "Nugine <nugine@foxmail.com>"]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/datenlord/s3-server"
+repository = "https://github.com/hUwUtao/s3-server"
 readme = "README.md"
 description = "An experimental generic S3 server"
 keywords = ["s3"]
 categories = ["web-programming", "web-programming::http-server"]
-rust-version = "1.59"
+rust-version = "1.83"
 default-run = "s3-server"
 
 [features]
@@ -43,7 +43,6 @@ hmac = "0.12.1"
 http = "0.2.7"
 httparse = "1.7.0"
 hyper = { version = "0.14.18", features = ["server"] }
-jsonwebtoken = "8.3.0"
 md-5 = "0.10.1"
 memchr = "2.4.1"
 mime = "0.3.16"

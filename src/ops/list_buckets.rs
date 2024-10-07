@@ -5,7 +5,7 @@ use std::ops::Deref;
 use super::{wrap_internal_error, ReqContext, S3Handler};
 
 use crate::dto::{ListBucketsError, ListBucketsOutput, ListBucketsRequest};
-use crate::errors::{S3Error, S3Result, S3StorageError};
+use crate::errors::{S3Error, S3Result};
 use crate::output::S3Output;
 use crate::storage::S3Storage;
 use crate::utils::{ResponseExt, XmlWriterExt};

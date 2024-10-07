@@ -4,7 +4,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::jwt::Claims;
+// use crate::jwt::Claims;
 pub(crate) mod database;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -23,17 +23,17 @@ pub struct Token {
     pub roles: Vec<String>,
 }
 
-impl From<&Token> for Claims {
-    fn from(val: &Token) -> Self {
-        Self {
-            sub: val.sub.to_string(),
-            exp: val.exp.unwrap_or(u64::MAX) as usize,
-            aud: vec!["s3".to_owned()],
-            sec: val.jti.to_string(),
-            roles: val.roles.clone(),
-        }
-    }
-}
+// impl From<&Token> for Claims {
+//     fn from(val: &Token) -> Self {
+//         Self {
+//             sub: val.sub.to_string(),
+//             exp: val.exp.unwrap_or(u64::MAX) as usize,
+//             aud: vec!["s3".to_owned()],
+//             sec: val.jti.to_string(),
+//             roles: val.roles.clone(),
+//         }
+//     }
+// }
 
 impl Token {
     pub fn get_sec_str(&self) -> String {
