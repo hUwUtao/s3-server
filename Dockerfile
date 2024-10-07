@@ -1,5 +1,5 @@
 # Use the official Rust image as a parent image
-FROM rust:slim as builder
+FROM rust:bookworm as builder
 
 # Set the working directory in the container
 WORKDIR /usr/src/s3-server
