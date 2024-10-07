@@ -160,7 +160,6 @@ pub use authorization::{Matcher, Permission};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::debug;
-use tracing::field::debug;
 
 /// S3 Authentication Provider
 

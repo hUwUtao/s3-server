@@ -23,11 +23,11 @@ use crate::path::S3Path;
 use crate::storage::S3Storage;
 use crate::utils::{crypto, time, Apply};
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::env;
 use std::io::{self, SeekFrom};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use futures::io::{AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufWriter};
 use futures::stream::{Stream, StreamExt, TryStreamExt};
@@ -47,6 +47,75 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
+    fn url_encode_list_results(
+        objects: Vec<Object>,
+        common_prefixes: Vec<String>,
+    ) -> (Vec<Object>, Vec<String>) {
+        fn encode_with_slash(s: &str) -> String {
+            s.split('/')
+                .map(|part| urlencoding::encode(part).into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        }
+
+        (
+            objects
+                .into_iter()
+                .map(|mut obj| {
+                    if let Some(key) = obj.key.as_mut() {
+                        *key = encode_with_slash(key);
+                    }
+                    obj
+                })
+                .collect(),
+            common_prefixes
+                .into_iter()
+                .map(|p| encode_with_slash(&p))
+                .collect(),
+        )
+    }
+
+    async fn abstract_list_objects(
+        &self,
+        bucket: &str,
+        prefix: &Option<String>,
+        delimiter: &Option<String>,
+        max_keys: i64,
+    ) -> io::Result<(Vec<Object>, Vec<String>)> {
+        let bucket_path = self.get_bucket_path(bucket)?;
+        debug!("Bucket path: {:?}", bucket_path);
+
+        let (search_dir, prefix_filter) =
+            if delimiter.is_none() || prefix.as_deref().unwrap_or("").is_empty() {
+                (PathBuf::new(), String::new())
+            } else {
+                self.parse_prefix_and_delimiter(prefix, delimiter)
+            };
+        let search_path = bucket_path.join(&search_dir);
+        debug!("Search path: {:?}", search_path);
+
+        if !search_path.is_dir() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let (mut objects, common_prefixes) = self
+            .list_contents(
+                delimiter.is_some() && prefix.as_deref().map_or(false, |p| !p.is_empty()),
+                &bucket_path,
+                &search_path,
+                &prefix_filter,
+                delimiter,
+                max_keys,
+            )
+            .await?;
+
+        objects.sort_by(|a, b| a.key.cmp(&b.key));
+        let mut common_prefixes: Vec<_> = common_prefixes.into_iter().collect();
+        common_prefixes.sort();
+
+        Ok((objects, common_prefixes))
+    }
+
     /// Constructs a file system storage located at `root`
     /// # Errors
     /// Returns an `Err` if current working directory is invalid or `root` doesn't exist
@@ -57,10 +126,40 @@ impl FileSystem {
 
     /// resolve object path under the virtual root
     fn get_object_path(&self, bucket: &str, key: &str) -> io::Result<PathBuf> {
-        let dir = Path::new(&bucket);
-        let file_path = Path::new(&key);
-        let ans = dir.join(file_path).absolutize_virtually(&self.root)?.into();
+        let bucket_path = self.get_bucket_path(bucket)?;
+        let file_path = Path::new(key);
+        let ans = bucket_path
+            .join(file_path)
+            .absolutize_virtually(&self.root)?
+            .into();
         Ok(ans)
+    }
+
+    /// Wrap get_object_path with URL decoding and filename sanitization
+    fn get_unsanitized_object_path(&self, bucket: &str, key: &str) -> io::Result<PathBuf> {
+        let decoded_key =
+            urlencoding::decode(key).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        // Sanitize filename
+        let sanitized_key = decoded_key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '/' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+
+        // if sanitized_key.split('/').any(|component| component == "..") {
+        //     return Err(io::Error::new(
+        //         io::ErrorKind::InvalidInput,
+        //         "Invalid path: contains '..' sequence",
+        //     ));
+        // }
+
+        self.get_object_path(bucket, &sanitized_key)
     }
 
     /// resolve bucket path under the virtual root
@@ -377,8 +476,20 @@ impl S3Storage for FileSystem {
             AmzCopySource::Bucket { bucket, key } => (bucket, key),
         };
 
-        let src_path = trace_try!(self.get_object_path(bucket, key));
+        let src_path = trace_try!(self.get_unsanitized_object_path(bucket, key));
+        debug!(
+            "CopyObject: src_path = {}, bucket = {}, key = {}",
+            src_path.display(),
+            bucket,
+            key,
+        );
         let dst_path = trace_try!(self.get_object_path(&input.bucket, &input.key));
+        debug!(
+            "CopyObject: dst_path = {}, input.bucket = {}, input.key = {}",
+            dst_path.display(),
+            input.bucket,
+            input.key
+        );
 
         let file_metadata = trace_try!(async_fs::metadata(&src_path).await);
         let last_modified = time::to_rfc3339(trace_try!(file_metadata.modified()));
@@ -661,57 +772,21 @@ impl S3Storage for FileSystem {
         &self,
         input: ListObjectsRequest,
     ) -> S3StorageResult<ListObjectsOutput, ListObjectsError> {
-        let bucket_path = trace_try!(self.get_bucket_path(&input.bucket));
-        debug!("Bucket path: {:?}", bucket_path);
-
-        let (search_dir, prefix_filter) =
-            if input.delimiter.is_none() || input.prefix.as_deref().unwrap_or("").is_empty() {
-                (PathBuf::new(), String::new())
-            } else {
-                self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter)
-            };
-        let search_path = bucket_path.join(&search_dir);
-        debug!("Search path: {:?}", search_path);
-
-        if !search_path.is_dir() {
-            return Ok(ListObjectsOutput {
-                name: Some(input.bucket),
-                prefix: input.prefix,
-                delimiter: input.delimiter,
-                encoding_type: input.encoding_type,
-                ..Default::default()
-            });
-        }
-
-        let (mut objects, common_prefixes) = trace_try!(
-            self.list_contents(
-                input.delimiter.is_some()
-                    && input.prefix.as_deref().map_or(false, |p| !p.is_empty()),
-                &bucket_path,
-                &search_path,
-                &prefix_filter,
+        let (objects, common_prefixes) = trace_try!(
+            self.abstract_list_objects(
+                &input.bucket,
+                &input.prefix,
                 &input.delimiter,
                 input.max_keys.unwrap_or(1000i64),
             )
             .await
         );
 
-        objects.sort_by(|a, b| a.key.cmp(&b.key));
-        let mut common_prefixes: Vec<_> = common_prefixes.into_iter().collect();
-        common_prefixes.sort();
-
-        // URL encode object keys and common prefixes if encoding type is specified
-        if input.encoding_type.as_deref() == Some("url") {
-            for object in objects.iter_mut() {
-                if let Some(key) = object.key.as_mut() {
-                    *key = urlencoding::encode(key).into_owned();
-                }
-            }
-            common_prefixes = common_prefixes
-                .into_iter()
-                .map(|p| urlencoding::encode(&p).into_owned())
-                .collect();
-        }
+        let (objects, common_prefixes) = if input.encoding_type.as_deref() == Some("url") {
+            Self::url_encode_list_results(objects, common_prefixes)
+        } else {
+            (objects, common_prefixes)
+        };
 
         Ok(ListObjectsOutput {
             contents: Some(objects),
@@ -741,61 +816,24 @@ impl S3Storage for FileSystem {
         &self,
         input: ListObjectsV2Request,
     ) -> S3StorageResult<ListObjectsV2Output, ListObjectsV2Error> {
-        let bucket_path = trace_try!(self.get_bucket_path(&input.bucket));
-        debug!("Bucket path: {:?}", bucket_path);
-
-        let (search_dir, prefix_filter) =
-            if input.delimiter.is_none() || input.prefix.as_deref().unwrap_or("").is_empty() {
-                (PathBuf::new(), String::new())
-            } else {
-                self.parse_prefix_and_delimiter(&input.prefix, &input.delimiter)
-            };
-        let search_path = bucket_path.join(&search_dir);
-        debug!("Search path: {:?}", search_path);
-
-        if !search_path.is_dir() {
-            return Ok(ListObjectsV2Output {
-                name: Some(input.bucket),
-                prefix: input.prefix,
-                delimiter: input.delimiter,
-                key_count: Some(0),
-                encoding_type: input.encoding_type.clone(),
-                ..Default::default()
-            });
-        }
-
-        let (mut objects, common_prefixes) = trace_try!(
-            self.list_contents(
-                input.delimiter.is_some()
-                    && input.prefix.as_deref().map_or(false, |p| !p.is_empty()),
-                &bucket_path,
-                &search_path,
-                &prefix_filter,
+        let (objects, common_prefixes) = trace_try!(
+            self.abstract_list_objects(
+                &input.bucket,
+                &input.prefix,
                 &input.delimiter,
                 input.max_keys.unwrap_or(1000i64),
             )
             .await
         );
 
-        objects.sort_by(|a, b| a.key.cmp(&b.key));
-        let mut common_prefixes: Vec<_> = common_prefixes.into_iter().collect();
-        common_prefixes.sort();
-
         let object_count = objects.len();
         let common_prefix_count = common_prefixes.len();
 
-        // URL encode object keys if encoding type is specified
-        if input.encoding_type.as_deref() == Some("url") {
-            for object in objects.iter_mut() {
-                if let Some(key) = object.key.as_mut() {
-                    *key = urlencoding::encode(key).into_owned();
-                }
-            }
-            common_prefixes = common_prefixes
-                .into_iter()
-                .map(|p| urlencoding::encode(&p).into_owned())
-                .collect();
-        }
+        let (objects, common_prefixes) = if input.encoding_type.as_deref() == Some("url") {
+            Self::url_encode_list_results(objects, common_prefixes)
+        } else {
+            (objects, common_prefixes)
+        };
 
         Ok(ListObjectsV2Output {
             contents: Some(objects),
