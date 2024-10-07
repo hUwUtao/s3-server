@@ -32,4 +32,4 @@ COPY --from=builder /usr/src/s3-server/target/release/s3-server /usr/bin
 EXPOSE 8014
 
 # Run the binary
-CMD ["/usr/bin/s3-server", "--fs-root", "/storage"]
+CMD ["/usr/bin/s3-server", "--fs-root", "/storage", "--host", "0.0.0.0"]
