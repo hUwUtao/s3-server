@@ -187,7 +187,7 @@ fn create_bucket(fs_root: PathBuf, bucket: String, owner_id: u64, ci: bool) -> R
         jti: Uuid::new_v4().as_u128(),
         exp: None,
         origin: bucket.clone(),
-        roles: vec!["admin".to_string()],
+        roles: vec![format!("s3:ObjectGet,ObjectPut,ObjectDelete,ObjectList,BucketGet,BucketList,BucketCreate,BucketDelete:{}*:*", bucket)],
     };
 
     let token_key = generate_token_key();

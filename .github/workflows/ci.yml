@@ -142,7 +142,7 @@ jobs:
       - name: Create test bucket and capture keys
         run: |
           mkdir -p data
-          output=$(cargo run --bin s3-sec create-bucket test 0 --ci)
+          output=$(cargo run --bin s3-sec create-bucket s3cmd 0 --ci)
           echo "ACCESS_KEY=$(echo "$output" | sed -n '1p')" >> $GITHUB_ENV
           echo "SECRET_KEY=$(echo "$output" | sed -n '2p')" >> $GITHUB_ENV
 
