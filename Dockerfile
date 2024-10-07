@@ -14,16 +14,23 @@ COPY . .
 RUN cargo build --release --bin s3-server
 
 # Use a smaller base image for the final image
-FROM debian:buster-slim
+FROM ghcr.io/huwutao/flywheel:main
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    libssl1.1 \
+    ca-certificates \
+    libc6 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
-WORKDIR /usr/local/bin
+WORKDIR /app
 
 # Copy the built executable from the builder stage
-COPY --from=builder /usr/src/s3-server/target/release/s3-server .
+COPY --from=builder /usr/src/s3-server/target/release/s3-server /usr/bin
 
 # Expose the port the app runs on
 EXPOSE 8014
 
 # Run the binary
-CMD ["./s3-server"]
+CMD ["/usr/bin/s3-server", "--fs-root", "/storage"]
